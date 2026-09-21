@@ -1,0 +1,26 @@
+{
+  "name": "nepal-hand-payment-system",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "concurrently -n web,api,palm -c cyan,green,magenta \"npm run dev -w @nepal-hand-pay/web\" \"npm run dev -w @nepal-hand-pay/api\" \"npm run dev:palm\"",
+    "dev:palm": "python -m uvicorn app.main:app --app-dir services/palm-recognition --reload --port 8001",
+    "build": "npm run build -w @nepal-hand-pay/shared-types && npm run build -w @nepal-hand-pay/api && npm run build -w @nepal-hand-pay/web",
+    "typecheck": "npm run build -w @nepal-hand-pay/shared-types && npm run typecheck -w @nepal-hand-pay/api && npm run typecheck -w @nepal-hand-pay/web",
+    "lint": "npm run build -w @nepal-hand-pay/shared-types && npm run lint -w @nepal-hand-pay/api && npm run lint -w @nepal-hand-pay/web",
+    "test": "npm run build -w @nepal-hand-pay/shared-types && npm run test -w @nepal-hand-pay/api && npm run test -w @nepal-hand-pay/web",
+    "test:palm": "python -m pytest services/palm-recognition/tests",
+    "seed": "npm run seed -w @nepal-hand-pay/api",
+    "format": "prettier --write ."
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "prettier": "^3.5.3",
+    "typescript": "^5.8.2"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  }
+}

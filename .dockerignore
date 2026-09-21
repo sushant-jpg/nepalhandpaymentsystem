@@ -1,0 +1,8 @@
+node_modules
+**/node_modules
+**/dist
+.git
+.env
+coverage
+.venv
+__pycache__
