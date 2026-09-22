@@ -1,5 +1,5 @@
 import { Router } from "express";
-import mongoose from "mongoose";
+import mongoose, { type FilterQuery } from "mongoose";
 import { z } from "zod";
 import { asyncHandler } from "../lib/async-handler.js";
 import { authenticate, authorize } from "../middleware/auth.js";
@@ -7,7 +7,7 @@ import { validate } from "../middleware/validate.js";
 import { AppError } from "../lib/errors.js";
 import { audit } from "../lib/audit.js";
 import { fromPaisa, toPaisa } from "../lib/money.js";
-import { FraudAlert, Merchant, Notification, PalmEnrollment, PalmVerification, PaymentRequest, Refund, SecurityEvent, SystemConfig, Transaction, User, Wallet } from "../models/index.js";
+import { FraudAlert, Merchant, Notification, PalmEnrollment, PalmVerification, PaymentRequest, Refund, SecurityEvent, SystemConfig, Transaction, User, Wallet, type UserRecord, type WalletDocument } from "../models/index.js";
 import { beginIdempotentOperation, completeIdempotentOperation, failIdempotentOperation, requestHash, requireIdempotencyKey } from "../lib/idempotency.js";
 import { rateLimit } from "../middleware/rate-limit.js";
 
@@ -35,7 +35,7 @@ router.get("/dashboard", asyncHandler(async (_req, res) => {
 
 router.get("/users", asyncHandler(async (req, res) => {
   const page = Math.max(1, Number(req.query.page) || 1); const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
-  const filter: any = req.query.role ? { role: req.query.role } : {};
+  const filter: FilterQuery<UserRecord> = req.query.role ? { role: req.query.role } : {};
   const [items, total] = await Promise.all([User.find(filter).select("-passwordHash").sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(), User.countDocuments(filter)]);
   res.json({ success: true, data: { items, pagination: { page, limit, total } } });
 }));
@@ -45,7 +45,7 @@ router.patch("/users/:id/status", validate(z.object({ status: z.enum(["ACTIVE", 
   if (!user) throw new AppError(404, "USER_NOT_FOUND", "User not found.");
   let walletOwnerId = user._id;
   if (user.role === "MERCHANT") {
-    const merchantProfile: any = await Merchant.findOne({ userId: user._id }).select("_id").lean();
+    const merchantProfile = await Merchant.findOne({ userId: user._id }).select("_id").lean();
     walletOwnerId = merchantProfile?._id ?? user._id;
   }
   if (["CUSTOMER", "MERCHANT"].includes(user.role)) await Wallet.updateOne({ ownerType: user.role, ownerId: walletOwnerId }, { $set: { status: req.body.status === "ACTIVE" ? "ACTIVE" : "FROZEN" } });
@@ -59,7 +59,7 @@ router.get("/merchants", asyncHandler(async (_req, res) => {
 }));
 
 router.patch("/merchants/:id/approval", validate(z.object({ status: z.enum(["APPROVED", "REJECTED", "SUSPENDED"]) })), asyncHandler(async (req, res) => {
-  const merchant: any = await Merchant.findByIdAndUpdate(req.params.id, { $set: { approvalStatus: req.body.status, approvedAt: req.body.status === "APPROVED" ? new Date() : undefined, approvedBy: req.auth!.userId } }, { new: true });
+  const merchant = await Merchant.findByIdAndUpdate(req.params.id, { $set: { approvalStatus: req.body.status, approvedAt: req.body.status === "APPROVED" ? new Date() : undefined, approvedBy: req.auth!.userId } }, { new: true });
   if (!merchant) throw new AppError(404, "MERCHANT_NOT_FOUND", "Merchant not found.");
   await Notification.create({ userId: merchant.userId, type: "MERCHANT_STATUS", title: `Merchant ${req.body.status.toLowerCase()}`, message: `Your merchant application is now ${req.body.status.toLowerCase()}.` });
   await audit(req, "MERCHANT_APPROVED", { type: "Merchant", id: merchant._id.toString() }, { status: req.body.status });
@@ -80,15 +80,16 @@ router.post("/demo-funds", rateLimit(10, 60_000), validate(z.object({ userId: z.
     throw new AppError(404, "CUSTOMER_NOT_FOUND", "Customer not found.");
   }
   const session = await mongoose.startSession();
-  let wallet: any;
+  let wallet: WalletDocument | undefined;
   const response = { success: true, data: { walletId: "", balance: 0 } };
   try {
-    await session.withTransaction(async () => {
-      wallet = await Wallet.findOneAndUpdate({ ownerType: "CUSTOMER", ownerId: user._id }, { $inc: { balancePaisa: toPaisa(req.body.amount), version: 1 } }, { new: true, session });
-      if (!wallet) throw new AppError(404, "WALLET_NOT_FOUND", "Customer wallet was not found.");
+    wallet = await session.withTransaction(async () => {
+      const creditedWallet = await Wallet.findOneAndUpdate({ ownerType: "CUSTOMER", ownerId: user._id }, { $inc: { balancePaisa: toPaisa(req.body.amount), version: 1 } }, { new: true, session });
+      if (!creditedWallet) throw new AppError(404, "WALLET_NOT_FOUND", "Customer wallet was not found.");
       await Notification.create([{ userId: user._id, type: "DEMO_CREDIT", title: "Demo funds added", message: `NPR ${req.body.amount.toLocaleString()} was added by an administrator.` }], { session });
-      response.data = { walletId: wallet.walletId, balance: fromPaisa(wallet.balancePaisa) };
+      response.data = { walletId: creditedWallet.walletId, balance: fromPaisa(creditedWallet.balancePaisa) };
       await completeIdempotentOperation(idempotency.recordId, response, 200, session);
+      return creditedWallet;
     });
   } catch (error) {
     await failIdempotentOperation(idempotency.recordId);
@@ -96,6 +97,7 @@ router.post("/demo-funds", rateLimit(10, 60_000), validate(z.object({ userId: z.
   } finally {
     await session.endSession();
   }
+  if (!wallet) throw new AppError(500, "WALLET_NOT_FOUND", "Customer wallet was not found after crediting.");
   await audit(req, "DEMO_FUNDS_CREDITED", { type: "Wallet", id: wallet.walletId }, { amountPaisa: toPaisa(req.body.amount) });
   res.json(response);
 }));

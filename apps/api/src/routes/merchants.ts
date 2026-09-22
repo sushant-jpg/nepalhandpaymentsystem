@@ -8,7 +8,7 @@ import { AppError } from "../lib/errors.js";
 import { audit } from "../lib/audit.js";
 import { fromPaisa, toPaisa } from "../lib/money.js";
 import { publicId } from "../lib/ids.js";
-import { Merchant, Notification, PaymentRequest, Refund, type RefundDocument, Transaction } from "../models/index.js";
+import { Merchant, Notification, PaymentRequest, Refund, type RefundDocument, Transaction, type TransactionRecord } from "../models/index.js";
 import { paymentProvider } from "../services/payment-provider.js";
 import { assertIdempotentReplay, requestHash, requireIdempotencyKey } from "../lib/idempotency.js";
 import { withDistributedLock } from "../lib/redis.js";
@@ -16,6 +16,13 @@ import { rateLimit } from "../middleware/rate-limit.js";
 
 const router = Router();
 router.use(authenticate, authorize("MERCHANT"));
+
+type CustomerSummary = { displayName: string };
+type RecentMerchantTransaction = Pick<TransactionRecord, "transactionId" | "amountPaisa" | "status" | "createdAt"> & {
+  customerId: CustomerSummary | null;
+};
+interface MerchantDailyAggregate { _id: null; revenue: number; count: number; customers: mongoose.Types.ObjectId[] }
+interface MerchantChartAggregate { _id: string; value: number }
 
 async function ownMerchant(userId: string) {
   const merchant = await Merchant.findOne({ userId });
@@ -28,13 +35,13 @@ router.get("/dashboard", asyncHandler(async (req, res) => {
   const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
   const monthStart = new Date(dayStart.getFullYear(), dayStart.getMonth(), 1);
   const [today, monthly, refunds, recent] = await Promise.all([
-    Transaction.aggregate([{ $match: { merchantId: merchant._id, status: "SUCCESS", createdAt: { $gte: dayStart } } }, { $group: { _id: null, revenue: { $sum: "$amountPaisa" }, count: { $sum: 1 }, customers: { $addToSet: "$customerId" } } }]),
-    Transaction.aggregate([{ $match: { merchantId: merchant._id, status: "SUCCESS", createdAt: { $gte: monthStart } } }, { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt", timezone: "Asia/Kathmandu" } }, value: { $sum: "$amountPaisa" } } }, { $sort: { _id: 1 } }]),
+    Transaction.aggregate<MerchantDailyAggregate>([{ $match: { merchantId: merchant._id, status: "SUCCESS", createdAt: { $gte: dayStart } } }, { $group: { _id: null, revenue: { $sum: "$amountPaisa" }, count: { $sum: 1 }, customers: { $addToSet: "$customerId" } } }]),
+    Transaction.aggregate<MerchantChartAggregate>([{ $match: { merchantId: merchant._id, status: "SUCCESS", createdAt: { $gte: monthStart } } }, { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt", timezone: "Asia/Kathmandu" } }, value: { $sum: "$amountPaisa" } } }, { $sort: { _id: 1 } }]),
     Refund.countDocuments({ merchantId: merchant._id, status: "REFUNDED", createdAt: { $gte: dayStart } }),
-    Transaction.find({ merchantId: merchant._id }).populate("customerId", "displayName").sort({ createdAt: -1 }).limit(6).lean(),
+    Transaction.find({ merchantId: merchant._id }).populate<{ customerId: CustomerSummary | null }>("customerId", "displayName").sort({ createdAt: -1 }).limit(6).lean<RecentMerchantTransaction[]>(),
   ]);
   const metrics = today[0] ?? { revenue: 0, count: 0, customers: [] };
-  res.json({ success: true, data: { merchant: { businessName: merchant.businessName, approvalStatus: merchant.approvalStatus }, metrics: { revenue: fromPaisa(metrics.revenue), transactions: metrics.count, customers: metrics.customers.length, refunds }, chart: monthly.map((x) => ({ date: x._id, value: fromPaisa(x.value) })), recent: recent.map((t: any) => ({ transactionId: t.transactionId, customerName: t.customerId?.displayName, amount: fromPaisa(t.amountPaisa), status: t.status, createdAt: t.createdAt })) } });
+  res.json({ success: true, data: { merchant: { businessName: merchant.businessName, approvalStatus: merchant.approvalStatus }, metrics: { revenue: fromPaisa(metrics.revenue), transactions: metrics.count, customers: metrics.customers.length, refunds }, chart: monthly.map((entry) => ({ date: entry._id, value: fromPaisa(entry.value) })), recent: recent.map((transaction) => ({ transactionId: transaction.transactionId, customerName: transaction.customerId?.displayName, amount: fromPaisa(transaction.amountPaisa), status: transaction.status, createdAt: transaction.createdAt })) } });
 }));
 
 router.patch("/profile", validate(z.object({ businessName: z.string().trim().min(2).max(160).optional(), registrationNumber: z.string().trim().max(80).optional(), panNumber: z.string().trim().max(40).optional(), category: z.string().trim().max(80).optional(), address: z.string().trim().max(300).optional() })), asyncHandler(async (req, res) => {

@@ -15,9 +15,11 @@ router.get("/", asyncHandler(async (_req, res) => {
 }));
 router.get("/live", (_req, res) => res.json({ success: true, data: { api: "ok" } }));
 router.get("/ready", asyncHandler(async (_req, res) => {
+  let palm = "unavailable";
+  try { palm = (await palmClient.health()).status; } catch { /* summarized below */ }
   const database = mongoose.connection.readyState === 1 ? "connected" : "disconnected";
   const redis = await redisHealth();
-  const ready = database === "connected" && redis !== "unavailable";
-  res.status(ready ? 200 : 503).json({ success: ready, data: { database, redis } });
+  const ready = database === "connected" && palm === "ok" && redis !== "unavailable";
+  res.status(ready ? 200 : 503).json({ success: ready, data: { database, redis, palmService: palm } });
 }));
 export default router;
