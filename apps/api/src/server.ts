@@ -30,7 +30,7 @@ io.use(async (socket, next) => {
 io.on("connection", (socket) => {
   socket.on("payment:watch", async (paymentId: unknown) => {
     if (typeof paymentId !== "string" || !/^NHPR-[A-Z0-9-]+$/.test(paymentId)) return;
-    const merchant: any = await Merchant.findOne({ userId: socket.data.userId }).select("_id").lean();
+    const merchant = await Merchant.findOne({ userId: socket.data.userId }).select("_id").lean();
     if (merchant && await PaymentRequest.exists({ publicId: paymentId, merchantId: merchant._id })) socket.join(`payment:${paymentId}`);
   });
 });

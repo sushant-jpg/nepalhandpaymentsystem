@@ -13,7 +13,7 @@ const router = Router();
 router.use(authenticate);
 
 router.get("/profile", asyncHandler(async (req, res) => {
-  const user: any = await User.findById(req.auth!.userId).lean();
+  const user = await User.findById(req.auth!.userId).lean();
   if (!user) throw new AppError(404, "USER_NOT_FOUND", "User not found.");
   const profile = req.auth!.role === "CUSTOMER" ? await CustomerProfile.findOne({ userId: user._id }).lean() : null;
   res.json({ success: true, data: { id: user._id, email: user.email, displayName: user.displayName, phone: user.phone, role: user.role, emailVerified: user.emailVerified, status: user.status, profile } });
@@ -30,7 +30,7 @@ router.patch("/profile", validate(z.object({ displayName: z.string().trim().min(
 }));
 
 router.post("/payment-pin", authorize("CUSTOMER"), validate(z.object({ password: z.string().min(1), pin: z.string().regex(/^\d{4,8}$/) })), asyncHandler(async (req, res) => {
-  const user: any = await User.findById(req.auth!.userId).select("+passwordHash +paymentPinHash");
+  const user = await User.findById(req.auth!.userId).select("+passwordHash +paymentPinHash");
   if (!user || !(await bcrypt.compare(req.body.password, user.passwordHash))) throw new AppError(401, "INVALID_PASSWORD", "Password is incorrect.");
   user.paymentPinHash = await bcrypt.hash(req.body.pin, 12);
   user.securityChangedAt = new Date();
@@ -62,10 +62,10 @@ router.get("/wallet", authorize("CUSTOMER", "MERCHANT"), asyncHandler(async (req
   let ownerId = req.auth!.userId;
   if (req.auth!.role === "MERCHANT") {
     const { Merchant } = await import("../models/index.js");
-    const merchant: any = await Merchant.findOne({ userId: req.auth!.userId }).lean();
+    const merchant = await Merchant.findOne({ userId: req.auth!.userId }).lean();
     ownerId = merchant?._id?.toString() ?? "missing";
   }
-  const wallet: any = await Wallet.findOne({ ownerType: req.auth!.role, ownerId }).lean();
+  const wallet = await Wallet.findOne({ ownerType: req.auth!.role, ownerId }).lean();
   if (!wallet) throw new AppError(404, "WALLET_NOT_FOUND", "Wallet was not found.");
   res.json({ success: true, data: { walletId: wallet.walletId, balance: fromPaisa(wallet.balancePaisa), currency: wallet.currency, status: wallet.status } });
 }));

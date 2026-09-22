@@ -10,7 +10,7 @@ import { AppError } from "../lib/errors.js";
 import { hashToken, randomToken, signAccessToken, signRefreshToken, verifyAccessToken, verifyRefreshToken } from "../lib/auth.js";
 import { audit, securityEvent } from "../lib/audit.js";
 import { config } from "../config.js";
-import { CustomerProfile, Merchant, RefreshToken, User, Wallet } from "../models/index.js";
+import { CustomerProfile, Merchant, RefreshToken, User, type UserDocument, Wallet } from "../models/index.js";
 import { validate } from "../middleware/validate.js";
 import { authenticate } from "../middleware/auth.js";
 import { rateLimit } from "../middleware/rate-limit.js";
@@ -31,11 +31,13 @@ const registerSchema = z.object({
   if (value.role === "MERCHANT" && !value.businessName) ctx.addIssue({ code: "custom", path: ["businessName"], message: "Business name is required." });
 });
 
-function publicUser(user: any) {
+type SessionUserSource = Pick<UserDocument, "_id" | "email" | "displayName" | "role" | "emailVerified" | "status">;
+
+function publicUser(user: SessionUserSource) {
   return { id: user._id.toString(), email: user.email, displayName: user.displayName, role: user.role as Role, emailVerified: user.emailVerified, status: user.status };
 }
 
-async function issueSession(req: Request, res: Response, user: any) {
+async function issueSession(req: Request, res: Response, user: SessionUserSource) {
   const safe = publicUser(user);
   const jti = nanoid(32);
   const refreshToken = signRefreshToken(safe, jti);
@@ -63,10 +65,10 @@ router.post("/register", rateLimit(10, 60_000), validate(registerSchema), asyncH
   const verificationToken = randomToken();
   const passwordHash = await bcrypt.hash(req.body.password, 12);
   const mongoSession = await mongoose.startSession();
-  let user: any;
+  let user: UserDocument | undefined;
   try {
     await mongoSession.withTransaction(async () => {
-      [user] = await User.create([{
+      const createdUsers = await User.create([{
         email: req.body.email,
         passwordHash,
         displayName: req.body.displayName,
@@ -76,17 +78,22 @@ router.post("/register", rateLimit(10, 60_000), validate(registerSchema), asyncH
         emailVerificationTokenHash: hashToken(verificationToken),
         emailVerificationExpiresAt: new Date(Date.now() + 24 * 3_600_000),
       }], { session: mongoSession });
+      const createdUser = createdUsers[0];
+      if (!createdUser) throw new AppError(500, "USER_PROVISIONING_FAILED", "User account could not be provisioned.");
+      user = createdUser;
       if (req.body.role === "CUSTOMER") {
         await CustomerProfile.create([{ userId: user._id }], { session: mongoSession });
         await Wallet.create([{ walletId: publicId("NHPW"), ownerType: "CUSTOMER", ownerId: user._id, balancePaisa: 0 }], { session: mongoSession });
       } else {
         const [merchant] = await Merchant.create([{ userId: user._id, businessName: req.body.businessName, approvalStatus: "PENDING" }], { session: mongoSession });
+        if (!merchant) throw new AppError(500, "MERCHANT_PROVISIONING_FAILED", "Merchant profile could not be provisioned.");
         await Wallet.create([{ walletId: publicId("NHPMW"), ownerType: "MERCHANT", ownerId: merchant._id, balancePaisa: 0 }], { session: mongoSession });
       }
     });
   } finally {
     await mongoSession.endSession();
   }
+  if (!user) throw new AppError(500, "USER_PROVISIONING_FAILED", "User account could not be provisioned.");
   req.auth = { userId: user._id.toString(), role: user.role, email: user.email };
   await audit(req, "USER_REGISTERED", { type: "User", id: user._id.toString() });
   const session = await issueSession(req, res, user);
@@ -95,7 +102,7 @@ router.post("/register", rateLimit(10, 60_000), validate(registerSchema), asyncH
 
 router.post("/login", rateLimit(8, 15 * 60_000), validate(z.object({ email: z.string().email(), password: z.string().min(1) })), asyncHandler(async (req, res) => {
   const email = req.body.email.toLowerCase();
-  const user: any = await User.findOne({ email }).select("+passwordHash");
+  const user = await User.findOne({ email }).select("+passwordHash");
   const passwordValid = user ? await bcrypt.compare(req.body.password, user.passwordHash) : false;
   if (!user || !passwordValid) {
     if (user) {
@@ -124,7 +131,7 @@ router.post("/refresh", rateLimit(30, 60_000), asyncHandler(async (req, res) => 
   if (!token) throw new AppError(401, "REFRESH_REQUIRED", "Refresh session is missing.");
   let payload;
   try { payload = verifyRefreshToken(token); } catch { throw new AppError(401, "INVALID_REFRESH", "Refresh session has expired."); }
-  const saved: any = await RefreshToken.findOneAndUpdate(
+  const saved = await RefreshToken.findOneAndUpdate(
     { tokenHash: hashToken(token), jti: payload.jti, revokedAt: { $exists: false } },
     { $set: { revokedAt: new Date() } },
     { new: true },
@@ -133,7 +140,7 @@ router.post("/refresh", rateLimit(30, 60_000), asyncHandler(async (req, res) => 
     await RefreshToken.updateMany({ userId: payload.sub, revokedAt: { $exists: false } }, { $set: { revokedAt: new Date() } });
     throw new AppError(401, "REFRESH_REUSED", "Refresh session is no longer valid. All refresh sessions were revoked.");
   }
-  const user: any = await User.findById(payload.sub);
+  const user = await User.findById(payload.sub);
   if (!user || user.status !== "ACTIVE") throw new AppError(401, "ACCOUNT_UNAVAILABLE", "Account is unavailable.");
   res.json({ success: true, data: await issueSession(req, res, user) });
 }));
@@ -161,7 +168,7 @@ router.get("/me", authenticate, asyncHandler(async (req, res) => {
 }));
 
 router.post("/verify-email", validate(z.object({ token: z.string().min(20) })), asyncHandler(async (req, res) => {
-  const user: any = await User.findOne({ emailVerificationTokenHash: hashToken(req.body.token), emailVerificationExpiresAt: { $gt: new Date() } }).select("+emailVerificationTokenHash");
+  const user = await User.findOne({ emailVerificationTokenHash: hashToken(req.body.token), emailVerificationExpiresAt: { $gt: new Date() } }).select("+emailVerificationTokenHash");
   if (!user) throw new AppError(400, "INVALID_TOKEN", "Verification token is invalid or expired.");
   user.emailVerified = true;
   user.emailVerificationTokenHash = undefined;
@@ -177,7 +184,7 @@ router.post("/forgot-password", rateLimit(5, 60_000), validate(z.object({ email:
 }));
 
 router.post("/reset-password", rateLimit(5, 60_000), validate(z.object({ token: z.string().min(20), password })), asyncHandler(async (req, res) => {
-  const user: any = await User.findOne({ passwordResetTokenHash: hashToken(req.body.token), passwordResetExpiresAt: { $gt: new Date() } }).select("+passwordHash +passwordResetTokenHash");
+  const user = await User.findOne({ passwordResetTokenHash: hashToken(req.body.token), passwordResetExpiresAt: { $gt: new Date() } }).select("+passwordHash +passwordResetTokenHash");
   if (!user) throw new AppError(400, "INVALID_TOKEN", "Reset token is invalid or expired.");
   user.passwordHash = await bcrypt.hash(req.body.password, 12);
   user.passwordResetTokenHash = undefined;

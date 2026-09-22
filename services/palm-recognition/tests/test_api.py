@@ -7,6 +7,7 @@ from test_recognition import palm_image
 
 def client_for(tmp_path, monkeypatch) -> TestClient:
     monkeypatch.setattr(main, "store", TemplateStore(str(tmp_path / "palm.db"), ""))
+    main.rebuild_index()
     return TestClient(main.app)
 
 

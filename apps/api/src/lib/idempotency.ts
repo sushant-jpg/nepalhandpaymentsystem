@@ -43,7 +43,7 @@ export async function beginIdempotentOperation(input: {
 }): Promise<IdempotencyStart> {
   const filter = { userId: input.userId, endpoint: input.endpoint, idempotencyKey: input.idempotencyKey };
   const readExisting = async () => {
-    const existing: any = await IdempotencyRecord.findOne(filter).select("+requestHash").lean();
+    const existing = await IdempotencyRecord.findOne(filter).select("+requestHash").lean();
     if (!existing) return null;
     assertIdempotentReplay(existing.requestHash, input.requestHash);
     if (existing.status === "COMPLETED" && existing.statusCode && existing.response) {
@@ -55,7 +55,7 @@ export async function beginIdempotentOperation(input: {
   const replay = await readExisting();
   if (replay) return replay;
   try {
-    const record: any = await IdempotencyRecord.create({
+    const record = await IdempotencyRecord.create({
       ...filter,
       requestHash: input.requestHash,
       expiresAt: new Date(Date.now() + (input.ttlSeconds ?? 86_400) * 1000),

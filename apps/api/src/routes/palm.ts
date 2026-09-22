@@ -33,7 +33,7 @@ router.post("/enroll", rateLimit(5, 15 * 60_000), validate(z.object({ handSide: 
 }));
 
 router.get("/status", asyncHandler(async (req, res) => {
-  const enrollment: any = await PalmEnrollment.findOne({ userId: req.auth!.userId, status: "ACTIVE" }).lean();
+  const enrollment = await PalmEnrollment.findOne({ userId: req.auth!.userId, status: "ACTIVE" }).lean();
   res.json({ success: true, data: enrollment ? { enrolled: true, handSide: enrollment.handSide, algorithmVersion: enrollment.algorithmVersion, enrolledAt: enrollment.enrolledAt } : { enrolled: false } });
 }));
 

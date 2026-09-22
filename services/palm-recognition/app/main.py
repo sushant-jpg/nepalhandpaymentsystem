@@ -8,15 +8,31 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, Header, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 
+from .index import LocalLshPalmTemplateIndex, PalmTemplateIndex
 from .recognition import PalmImageError, aggregate_samples, extract_feature, similarity
-from .store import TemplateStore
+from .store import PalmTemplateRepository, TemplateStore
 
 ALGORITHM_VERSION = "prototype-rgb-v2"
 REQUIRED_THRESHOLD = float(os.getenv("PALM_MATCH_THRESHOLD", "0.88"))
 DUPLICATE_THRESHOLD = float(os.getenv("PALM_DUPLICATE_THRESHOLD", "0.97"))
 SERVICE_KEY = os.getenv("PALM_SERVICE_KEY", "local-service-key-change-me")
+IDENTIFY_CANDIDATE_LIMIT = max(1, min(int(os.getenv("PALM_IDENTIFY_CANDIDATE_LIMIT", "10")), 100))
+DUPLICATE_CANDIDATE_LIMIT = max(IDENTIFY_CANDIDATE_LIMIT, min(int(os.getenv("PALM_DUPLICATE_CANDIDATE_LIMIT", "50")), 200))
 default_database_path = Path(__file__).resolve().parent.parent / "data" / "palm.db"
-store = TemplateStore(os.getenv("PALM_DATABASE_PATH", str(default_database_path)), os.getenv("PALM_TEMPLATE_ENCRYPTION_KEY", ""))
+store: PalmTemplateRepository = TemplateStore(os.getenv("PALM_DATABASE_PATH", str(default_database_path)), os.getenv("PALM_TEMPLATE_ENCRYPTION_KEY", ""))
+index: PalmTemplateIndex
+
+
+def rebuild_index() -> None:
+    """Hydrate the replaceable candidate index from encrypted durable records."""
+    global index
+    local_index = LocalLshPalmTemplateIndex()
+    for template in store.list():
+        local_index.add(template["user_id"], template["vector"])
+    index = local_index
+
+
+rebuild_index()
 
 app = FastAPI(
     title="Nepal Hand Pay — Prototype Palm Recognition",
@@ -74,10 +90,12 @@ def health() -> dict:
 @app.post("/palm/enroll", dependencies=[Depends(authorize)])
 def enroll(payload: EnrollRequest) -> dict:
     vector, quality = aggregate_samples(payload.samples)
-    for template in store.all():
-        if template["user_id"] != payload.user_id and similarity(vector, template["vector"]) >= DUPLICATE_THRESHOLD:
+    for candidate in index.search(vector, limit=DUPLICATE_CANDIDATE_LIMIT):
+        template = store.get(candidate.template_id)
+        if template and template["user_id"] != payload.user_id and similarity(vector, template["vector"]) >= DUPLICATE_THRESHOLD:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Palm is already enrolled")
     template_ref = store.save(payload.user_id, payload.hand_side, ALGORITHM_VERSION, vector, quality)
+    index.add(payload.user_id, vector)
     return response(True, payload.user_id, 1.0, template_ref, quality)
 
 
@@ -95,17 +113,22 @@ def verify(payload: VerifyRequest) -> dict:
 def identify(payload: ImageRequest) -> dict:
     probe = extract_feature(payload.image)
     best_user, best_score = None, 0.0
-    for template in store.all():
-        score = similarity(probe.vector, template["vector"])
-        if score > best_score:
-            best_user, best_score = template["user_id"], score
+    for candidate in index.search(probe.vector, limit=IDENTIFY_CANDIDATE_LIMIT):
+        template = store.get(candidate.template_id)
+        if template:
+            score = similarity(probe.vector, template["vector"])
+            if score > best_score:
+                best_user, best_score = template["user_id"], score
     matched = best_user is not None and best_score >= REQUIRED_THRESHOLD
     return response(matched, best_user if matched else None, best_score, quality=probe.quality)
 
 
 @app.delete("/palm/{user_id}", dependencies=[Depends(authorize)])
 def remove(user_id: str) -> dict:
-    return {"deleted": store.delete(user_id)}
+    deleted = store.delete(user_id)
+    if deleted:
+        index.remove(user_id)
+    return {"deleted": deleted}
 
 
 @app.get("/palm/status/{user_id}", dependencies=[Depends(authorize)])

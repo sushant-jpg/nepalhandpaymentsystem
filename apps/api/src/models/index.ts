@@ -1,4 +1,4 @@
-import mongoose, { Schema, model, models } from "mongoose";
+import mongoose, { HydratedDocument, InferSchemaType, Schema, model, models } from "mongoose";
 
 const objectId = Schema.Types.ObjectId;
 const timestamps = { timestamps: true } as const;
@@ -117,7 +117,7 @@ const paymentRequestSchema = new Schema({
   amountPaisa: { type: Number, required: true, min: 1, validate: Number.isSafeInteger },
   currency: { type: String, enum: ["NPR"], default: "NPR" },
   description: { type: String, maxlength: 180 },
-  state: { type: String, enum: ["CREATED", "AWAITING_PALM", "CUSTOMER_IDENTIFIED", "RISK_CHECK", "AWAITING_CONFIRMATION", "AWAITING_PIN", "PROCESSING", "SUCCESS", "FAILED", "CANCELLED", "EXPIRED", "REFUNDED", "PARTIALLY_REFUNDED"], default: "CREATED", index: true },
+  state: { type: String, enum: ["CREATED", "AWAITING_PALM", "CUSTOMER_IDENTIFIED", "RISK_CHECK", "AWAITING_CONFIRMATION", "AWAITING_PIN", "PROCESSING", "SUCCESS", "FAILED", "CANCELLED", "EXPIRED", "REFUNDED", "PARTIALLY_REFUNDED", "BLOCKED"], default: "CREATED", index: true },
   idempotencyKey: { type: String, required: true },
   idempotencyRequestHash: { type: String, required: true, select: false },
   processIdempotencyKey: { type: String, select: false },
@@ -238,22 +238,49 @@ const idempotencyRecordSchema = new Schema({
 }, timestamps);
 idempotencyRecordSchema.index({ userId: 1, endpoint: 1, idempotencyKey: 1 }, { unique: true });
 
-type AnyModel = mongoose.Model<any>;
-export const User = (models.User || model("User", userSchema)) as AnyModel;
-export const CustomerProfile = (models.CustomerProfile || model("CustomerProfile", customerProfileSchema)) as AnyModel;
-export const Merchant = (models.Merchant || model("Merchant", merchantSchema)) as AnyModel;
-export const Wallet = (models.Wallet || model("Wallet", walletSchema)) as AnyModel;
-export const Transaction = (models.Transaction || model("Transaction", transactionSchema)) as AnyModel;
-export const PalmEnrollment = (models.PalmEnrollment || model("PalmEnrollment", palmEnrollmentSchema)) as AnyModel;
-export const PalmVerification = (models.PalmVerification || model("PalmVerification", palmVerificationSchema)) as AnyModel;
-export const PaymentRequest = (models.PaymentRequest || model("PaymentRequest", paymentRequestSchema)) as AnyModel;
-export const Refund = (models.Refund || model("Refund", refundSchema)) as AnyModel;
-export const SecurityEvent = (models.SecurityEvent || model("SecurityEvent", securityEventSchema)) as AnyModel;
-export const FraudAlert = (models.FraudAlert || model("FraudAlert", fraudAlertSchema)) as AnyModel;
-export const AuditLog = (models.AuditLog || model("AuditLog", auditLogSchema)) as AnyModel;
-export const RefreshToken = (models.RefreshToken || model("RefreshToken", refreshTokenSchema)) as AnyModel;
-export const Notification = (models.Notification || model("Notification", notificationSchema)) as AnyModel;
-export const SystemConfig = (models.SystemConfig || model("SystemConfig", systemConfigSchema)) as AnyModel;
-export const IdempotencyRecord = (models.IdempotencyRecord || model("IdempotencyRecord", idempotencyRecordSchema)) as AnyModel;
+export type UserRecord = InferSchemaType<typeof userSchema>;
+export type CustomerProfileRecord = InferSchemaType<typeof customerProfileSchema>;
+export type MerchantRecord = InferSchemaType<typeof merchantSchema>;
+export type WalletRecord = InferSchemaType<typeof walletSchema>;
+export type TransactionRecord = InferSchemaType<typeof transactionSchema>;
+export type PalmEnrollmentRecord = InferSchemaType<typeof palmEnrollmentSchema>;
+export type PalmVerificationRecord = InferSchemaType<typeof palmVerificationSchema>;
+export type PaymentRequestRecord = InferSchemaType<typeof paymentRequestSchema>;
+export type RefundRecord = InferSchemaType<typeof refundSchema>;
+export type SecurityEventRecord = InferSchemaType<typeof securityEventSchema>;
+export type FraudAlertRecord = InferSchemaType<typeof fraudAlertSchema>;
+export type AuditLogRecord = InferSchemaType<typeof auditLogSchema>;
+export type RefreshTokenRecord = InferSchemaType<typeof refreshTokenSchema>;
+export type NotificationRecord = InferSchemaType<typeof notificationSchema>;
+export type SystemConfigRecord = InferSchemaType<typeof systemConfigSchema>;
+export type IdempotencyRecord = InferSchemaType<typeof idempotencyRecordSchema>;
+
+export type UserDocument = HydratedDocument<UserRecord>;
+export type MerchantDocument = HydratedDocument<MerchantRecord>;
+export type WalletDocument = HydratedDocument<WalletRecord>;
+export type PaymentRequestDocument = HydratedDocument<PaymentRequestRecord>;
+export type TransactionDocument = HydratedDocument<TransactionRecord>;
+export type RefundDocument = HydratedDocument<RefundRecord>;
+export type AuditLogDocument = HydratedDocument<AuditLogRecord>;
+export type SecurityEventDocument = HydratedDocument<SecurityEventRecord>;
+export type RefreshTokenDocument = HydratedDocument<RefreshTokenRecord>;
+export type PalmEnrollmentDocument = HydratedDocument<PalmEnrollmentRecord>;
+
+export const User = (models.User || model<UserRecord>("User", userSchema)) as mongoose.Model<UserRecord>;
+export const CustomerProfile = (models.CustomerProfile || model<CustomerProfileRecord>("CustomerProfile", customerProfileSchema)) as mongoose.Model<CustomerProfileRecord>;
+export const Merchant = (models.Merchant || model<MerchantRecord>("Merchant", merchantSchema)) as mongoose.Model<MerchantRecord>;
+export const Wallet = (models.Wallet || model<WalletRecord>("Wallet", walletSchema)) as mongoose.Model<WalletRecord>;
+export const Transaction = (models.Transaction || model<TransactionRecord>("Transaction", transactionSchema)) as mongoose.Model<TransactionRecord>;
+export const PalmEnrollment = (models.PalmEnrollment || model<PalmEnrollmentRecord>("PalmEnrollment", palmEnrollmentSchema)) as mongoose.Model<PalmEnrollmentRecord>;
+export const PalmVerification = (models.PalmVerification || model<PalmVerificationRecord>("PalmVerification", palmVerificationSchema)) as mongoose.Model<PalmVerificationRecord>;
+export const PaymentRequest = (models.PaymentRequest || model<PaymentRequestRecord>("PaymentRequest", paymentRequestSchema)) as mongoose.Model<PaymentRequestRecord>;
+export const Refund = (models.Refund || model<RefundRecord>("Refund", refundSchema)) as mongoose.Model<RefundRecord>;
+export const SecurityEvent = (models.SecurityEvent || model<SecurityEventRecord>("SecurityEvent", securityEventSchema)) as mongoose.Model<SecurityEventRecord>;
+export const FraudAlert = (models.FraudAlert || model<FraudAlertRecord>("FraudAlert", fraudAlertSchema)) as mongoose.Model<FraudAlertRecord>;
+export const AuditLog = (models.AuditLog || model<AuditLogRecord>("AuditLog", auditLogSchema)) as mongoose.Model<AuditLogRecord>;
+export const RefreshToken = (models.RefreshToken || model<RefreshTokenRecord>("RefreshToken", refreshTokenSchema)) as mongoose.Model<RefreshTokenRecord>;
+export const Notification = (models.Notification || model<NotificationRecord>("Notification", notificationSchema)) as mongoose.Model<NotificationRecord>;
+export const SystemConfig = (models.SystemConfig || model<SystemConfigRecord>("SystemConfig", systemConfigSchema)) as mongoose.Model<SystemConfigRecord>;
+export const IdempotencyRecord = (models.IdempotencyRecord || model<IdempotencyRecord>("IdempotencyRecord", idempotencyRecordSchema)) as mongoose.Model<IdempotencyRecord>;
 
 export const isValidId = (value: string) => mongoose.isValidObjectId(value);

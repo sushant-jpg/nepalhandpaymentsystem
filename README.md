@@ -2,7 +2,7 @@
 
 Nepal Hand Pay is a full-stack fintech portfolio prototype for cardless checkout using an ordinary RGB camera, a simulated NPR wallet, and risk-based customer confirmation. It includes customer, merchant, administrator, and read-only auditor workspaces connected to real API, MongoDB, Redis, WebSocket, and Python recognition-service paths.
 
-> **This project is an educational/portfolio prototype. Webcam-based palm recognition is not equivalent to commercial infrared palm-vein payment technology and should not be used for real financial authentication without appropriate hardware, security certification, compliance, and production-grade biometric technology.**
+> **This is an educational/portfolio biometric prototype. RGB webcam palm recognition is not equivalent to commercial infrared palm-vein technology and should not be used as real financial biometric authentication without certified hardware, security review, regulatory compliance, and production-grade biometric technology.**
 
 No real bank settlement occurs. Every wallet/provider response is clearly marked as mock data.
 
@@ -22,14 +22,14 @@ flowchart LR
   Palm --> Templates[(Encrypted SQLite templates)]
 ```
 
-See [architecture](docs/architecture.md), [payment flow](docs/payment-flow.md), [palm authentication](docs/palm-authentication.md), [security](docs/security.md), [API](docs/api.md), [performance](docs/performance.md), and [deployment](docs/deployment.md).
+See [architecture](docs/architecture.md), [payment flow](docs/payment-flow.md), [palm authentication](docs/palm-authentication.md), [security](docs/security.md), [scalability](docs/scalability.md), [test matrix](docs/test-matrix.md), [API](docs/api.md), [performance](docs/performance.md), and [deployment](docs/deployment.md).
 
 ## Features
 
 - Secure registration/login, bcrypt password and payment-PIN hashing, rotating refresh tokens, access-token revocation, lockouts, and role-based routes.
 - Payment lifecycle with explicit transitions, request/processing idempotency, atomic wallet movement, distributed locks, status polling, and realtime updates.
 - Provider boundary with a clearly labeled `MockPaymentProvider`; no fake bank success is represented.
-- Multiple-sample palm enrollment, ROI extraction, normalization, quality checks, duplicate detection, configurable matching, encrypted versioned templates, deletion, retry lockout, and explicitly limited passive RGB checks.
+- Multiple-sample palm enrollment, ROI extraction, normalization, quality checks, bounded candidate retrieval before exact verification, duplicate detection, configurable matching, encrypted versioned templates, deletion, retry lockout, and explicitly limited passive RGB checks.
 - Explainable LOW/MEDIUM/HIGH/BLOCKED rules and PIN/OTP step-up. Development OTPs are returned only outside production.
 - Full/partial atomic refunds with replay protection.
 - Customer wallet/history/security views; merchant POS/history/refunds; admin metrics/configuration; auditor read-only transactions, risk events, and audit trail.
@@ -134,3 +134,4 @@ With a live seeded stack, run `npm run test:postman`. See [postman/README.md](po
 - The mock wallet is not a ledger suitable for regulated funds. A real deployment needs double-entry accounting, reconciliation, settlement, disputes, and a licensed Nepal-compatible provider adapter.
 - Automated browser tests and full database integration tests should be expanded against disposable MongoDB/Redis services. The checked-in concurrency tests validate conditional-update behavior with deterministic doubles; they are not a substitute for distributed infrastructure tests.
 - No job queue is included yet because the prototype has no external email/SMS delivery. Payment and wallet consistency remain synchronous; add BullMQ workers only when real notification, analytics, or reconciliation workloads exist.
+- The local palm candidate index is an in-process LSH demo boundary. Production must use a recall-tested, durable ANN/vector service such as Qdrant, Milvus, pgvector, or FAISS behind a worker/service boundary.

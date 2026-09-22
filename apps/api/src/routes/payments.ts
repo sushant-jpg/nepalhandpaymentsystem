@@ -15,7 +15,7 @@ import { emitPayment } from "../lib/realtime.js";
 import { assertIdempotentReplay, requestHash, requireIdempotencyKey } from "../lib/idempotency.js";
 import { deleteTemporary, getTemporary, incrementCounter, setTemporary, withDistributedLock } from "../lib/redis.js";
 import { config } from "../config.js";
-import { FraudAlert, Merchant, Notification, PalmEnrollment, PalmVerification, PaymentRequest, Transaction, User, Wallet } from "../models/index.js";
+import { FraudAlert, Merchant, Notification, PalmEnrollment, PalmVerification, PaymentRequest, type PaymentRequestDocument, Transaction, User, Wallet } from "../models/index.js";
 import { palmClient } from "../services/palm-client.js";
 import { assessPaymentRisk } from "../services/risk.js";
 import { paymentProvider } from "../services/payment-provider.js";
@@ -29,13 +29,13 @@ const dataImage = z.string().regex(/^data:image\/(jpeg|png|webp);base64,/, "A JP
 const idParams = z.object({ id: z.string().regex(/^NHPR-[A-Z0-9-]{10,}$/) });
 
 async function getMerchant(userId: string) {
-  const merchant: any = await Merchant.findOne({ userId });
+  const merchant = await Merchant.findOne({ userId });
   if (!merchant) throw new AppError(404, "MERCHANT_NOT_FOUND", "Merchant profile was not found.");
   if (merchant.approvalStatus !== "APPROVED") throw new AppError(403, "MERCHANT_NOT_APPROVED", "Merchant must be approved before accepting payments.");
   return merchant;
 }
 
-function paymentData(payment: any, extra: Record<string, unknown> = {}) {
+function paymentData(payment: Pick<PaymentRequestDocument, "publicId" | "state" | "amountPaisa" | "currency" | "expiresAt" | "orderReference">, extra: Record<string, unknown> = {}) {
   return {
     id: payment.publicId,
     state: payment.state,
@@ -48,10 +48,10 @@ function paymentData(payment: any, extra: Record<string, unknown> = {}) {
   };
 }
 
-async function existingTransactionResult(payment: any) {
-  const transaction: any = await Transaction.findOne({ paymentRequestId: payment._id }).lean();
+async function existingTransactionResult(payment: Pick<PaymentRequestDocument, "_id" | "state" | "amountPaisa" | "customerId">) {
+  const transaction = await Transaction.findOne({ paymentRequestId: payment._id }).lean();
   if (!transaction) return null;
-  const wallet: any = await Wallet.findOne({ ownerType: "CUSTOMER", ownerId: payment.customerId }).lean();
+  const wallet = await Wallet.findOne({ ownerType: "CUSTOMER", ownerId: payment.customerId }).lean();
   return {
     state: payment.state,
     transactionId: transaction.transactionId,
@@ -69,7 +69,7 @@ router.post("/requests", rateLimit(60, 60_000), validate(z.object({
   const merchant = await getMerchant(req.auth!.userId);
   const idempotencyKey = requireIdempotencyKey(req);
   const bodyHash = requestHash(req.body);
-  const existing: any = await PaymentRequest.findOne({ merchantId: merchant._id, idempotencyKey }).select("+idempotencyRequestHash").lean();
+  const existing = await PaymentRequest.findOne({ merchantId: merchant._id, idempotencyKey }).select("+idempotencyRequestHash").lean();
   if (existing) {
     assertIdempotentReplay(existing.idempotencyRequestHash, bodyHash);
     return res.json({ success: true, data: paymentData(existing, { duplicate: true }) });
@@ -77,7 +77,7 @@ router.post("/requests", rateLimit(60, 60_000), validate(z.object({
 
   const paymentId = publicId("NHPR");
   const provider = await paymentProvider.createPayment({ paymentId, amountPaisa: toPaisa(req.body.amount), currency: "NPR" });
-  let payment: any;
+  let payment: PaymentRequestDocument | null = null;
   try {
     payment = await PaymentRequest.create({
       publicId: paymentId,
@@ -93,7 +93,7 @@ router.post("/requests", rateLimit(60, 60_000), validate(z.object({
     });
   } catch (error) {
     if (typeof error === "object" && error !== null && "code" in error && error.code === 11000) {
-      const raced: any = await PaymentRequest.findOne({ merchantId: merchant._id, idempotencyKey }).select("+idempotencyRequestHash").lean();
+      const raced = await PaymentRequest.findOne({ merchantId: merchant._id, idempotencyKey }).select("+idempotencyRequestHash").lean();
       if (raced) {
         assertIdempotentReplay(raced.idempotencyRequestHash, bodyHash);
         return res.json({ success: true, data: paymentData(raced, { duplicate: true }) });
@@ -101,6 +101,7 @@ router.post("/requests", rateLimit(60, 60_000), validate(z.object({
     }
     throw error;
   }
+  if (!payment) throw new AppError(500, "PAYMENT_CREATE_FAILED", "Payment request could not be created.");
   transitionPayment(payment, "AWAITING_PALM");
   await payment.save();
   await setTemporary(`payment:session:${payment.publicId}`, JSON.stringify({ merchantId: merchant._id, state: payment.state }), 300);
@@ -111,16 +112,16 @@ router.post("/requests", rateLimit(60, 60_000), validate(z.object({
 
 router.get("/requests/:id", validate(idParams, "params"), asyncHandler(async (req, res) => {
   const merchant = await getMerchant(req.auth!.userId);
-  const payment: any = await PaymentRequest.findOne({ publicId: req.params.id, merchantId: merchant._id }).lean();
+  const payment = await PaymentRequest.findOne({ publicId: req.params.id, merchantId: merchant._id }).lean();
   if (!payment) throw new AppError(404, "PAYMENT_NOT_FOUND", "Payment request was not found.");
-  const transaction: any = await Transaction.findOne({ paymentRequestId: payment._id }).select("transactionId status").lean();
+  const transaction = await Transaction.findOne({ paymentRequestId: payment._id }).select("transactionId status").lean();
   res.json({ success: true, data: paymentData(payment, { transactionId: transaction?.transactionId, transactionStatus: transaction?.status }) });
 }));
 
 router.post("/requests/:id/identify", rateLimit(10, 60_000), validate(idParams, "params"), validate(z.object({ image: dataImage })), asyncHandler(async (req, res) => {
   const merchant = await getMerchant(req.auth!.userId);
   await withDistributedLock(`identify:${req.params.id}`, 20_000, async () => {
-    const payment: any = await PaymentRequest.findOne({ publicId: req.params.id, merchantId: merchant._id }).select("+confirmationTokenHash");
+    const payment = await PaymentRequest.findOne({ publicId: req.params.id, merchantId: merchant._id }).select("+confirmationTokenHash");
     if (!payment) throw new AppError(404, "PAYMENT_NOT_FOUND", "Payment request was not found.");
     if (payment.expiresAt < new Date()) {
       if (payment.state === "AWAITING_PALM") {
@@ -138,7 +139,7 @@ router.post("/requests/:id/identify", rateLimit(10, 60_000), validate(idParams, 
 
     emitPayment(payment.publicId, "VERIFYING");
     const match = await palmClient.identify(req.body.image);
-    const verification: any = await PalmVerification.create({
+    const verification = await PalmVerification.create({
       verificationId: publicId("PV"), userId: match.userId, paymentRequestId: payment._id, matched: match.matched,
       similarity: match.similarity, threshold: match.threshold, algorithmVersion: match.algorithmVersion,
       failureReason: match.matched ? undefined : "NO_CONFIDENT_MATCH", ip: req.ip,
@@ -168,11 +169,11 @@ router.post("/requests/:id/identify", rateLimit(10, 60_000), validate(idParams, 
     payment.requiresPin = risk.requiresPin;
     payment.requiresOtp = risk.requiresOtp;
     if (risk.level === "BLOCKED") {
-      transitionPayment(payment, "FAILED");
+      transitionPayment(payment, "BLOCKED");
       payment.failureCode = "RISK_BLOCKED";
       await payment.save();
       await FraudAlert.create({ userId: customer._id, paymentRequestId: payment._id, riskScore: risk.score, riskLevel: risk.level, indicators: risk.indicators, status: "BLOCKED" });
-      emitPayment(payment.publicId, "FAILED", { riskLevel: risk.level });
+      emitPayment(payment.publicId, "BLOCKED", { riskLevel: risk.level });
       throw new AppError(403, "PAYMENT_BLOCKED", "Payment was blocked by the risk policy.");
     }
 
@@ -209,17 +210,20 @@ router.post("/requests/:id/confirm", rateLimit(20, 60_000), validate(idParams, "
   const merchant = await getMerchant(req.auth!.userId);
   const idempotencyKey = requireIdempotencyKey(req);
   const processHash = requestHash({ paymentId: req.params.id, decision: req.body.decision });
-  let payment: any = await PaymentRequest.findOne({ publicId: req.params.id, merchantId: merchant._id }).select("+confirmationTokenHash +processIdempotencyKey +processRequestHash");
+  let payment = await PaymentRequest.findOne({ publicId: req.params.id, merchantId: merchant._id }).select("+confirmationTokenHash +processIdempotencyKey +processRequestHash");
   if (!payment) throw new AppError(404, "PAYMENT_NOT_FOUND", "Payment request was not found.");
+  if (!payment.customerId || payment.riskLevel === undefined || payment.riskScore === undefined) {
+    throw new AppError(409, "PAYMENT_NOT_AUTHORIZED", "Payment does not have a completed customer and risk authorization.");
+  }
 
   if (["SUCCESS", "REFUNDED", "PARTIALLY_REFUNDED"].includes(payment.state)) {
     if (payment.processIdempotencyKey && payment.processIdempotencyKey !== idempotencyKey) throw new AppError(409, "PAYMENT_ALREADY_PROCESSED", "This payment has already been processed.");
-    assertIdempotentReplay(payment.processRequestHash, processHash);
+    assertIdempotentReplay(payment.processRequestHash ?? undefined, processHash);
     const replay = await existingTransactionResult(payment);
     if (replay) return res.json({ success: true, data: replay });
   }
   if (payment.processIdempotencyKey && payment.processIdempotencyKey !== idempotencyKey) throw new AppError(409, "IDEMPOTENCY_KEY_REUSED", "A different processing key already owns this payment.");
-  assertIdempotentReplay(payment.processRequestHash, processHash);
+  assertIdempotentReplay(payment.processRequestHash ?? undefined, processHash);
   if (payment.state === "PROCESSING") return res.status(202).json({ success: true, data: paymentData(payment, { message: "Payment is still processing." }) });
   if (!["AWAITING_CONFIRMATION", "AWAITING_PIN"].includes(payment.state)) throw new AppError(409, "INVALID_PAYMENT_STATE", `Payment cannot be confirmed while ${payment.state}.`);
   if (payment.expiresAt < new Date()) {
@@ -245,7 +249,7 @@ router.post("/requests/:id/confirm", rateLimit(20, 60_000), validate(idParams, "
     return res.json({ success: true, data: { state: "CANCELLED" } });
   }
 
-  const customer: any = await User.findById(payment.customerId).select("+paymentPinHash +failedPinAttempts +pinLockUntil");
+  const customer = await User.findById(payment.customerId).select("+paymentPinHash +failedPinAttempts +pinLockUntil");
   if (!customer) throw new AppError(403, "CUSTOMER_UNAVAILABLE", "Customer account is unavailable.");
   if (payment.requiresPin) {
     if (payment.state === "AWAITING_CONFIRMATION") {
@@ -279,7 +283,7 @@ router.post("/requests/:id/confirm", rateLimit(20, 60_000), validate(idParams, "
     { new: true },
   );
   if (!payment) {
-    const current: any = await PaymentRequest.findOne({ publicId: req.params.id, merchantId: merchant._id }).select("+processIdempotencyKey +processRequestHash");
+    const current = await PaymentRequest.findOne({ publicId: req.params.id, merchantId: merchant._id }).select("+processIdempotencyKey +processRequestHash");
     if (current?.processIdempotencyKey === idempotencyKey) {
       const replay = await existingTransactionResult(current);
       if (replay) return res.json({ success: true, data: replay });
@@ -287,10 +291,14 @@ router.post("/requests/:id/confirm", rateLimit(20, 60_000), validate(idParams, "
     }
     throw new AppError(409, "OPERATION_IN_PROGRESS", "This payment is already being processed.");
   }
+  if (!payment.customerId || payment.riskLevel === undefined || payment.riskScore === undefined) {
+    throw new AppError(409, "PAYMENT_NOT_AUTHORIZED", "Payment authorization was lost during processing.");
+  }
+  const authorizedCustomerId = payment.customerId;
   if (payment.requiresOtp) await deleteTemporary(`payment:otp:${payment.publicId}`);
   emitPayment(payment.publicId, "PROCESSING");
 
-  let transaction: any;
+  const processingResult: { transactionId?: string } = {};
   try {
     await withDistributedLock(`payment:${payment.publicId}`, 30_000, async () => {
       const session = await mongoose.startSession();
@@ -298,20 +306,22 @@ router.post("/requests/:id/confirm", rateLimit(20, 60_000), validate(idParams, "
         await session.withTransaction(async () => {
           const existing = await Transaction.findOne({ paymentRequestId: payment._id }).session(session);
           if (existing) {
-            transaction = existing;
+            processingResult.transactionId = existing.transactionId;
             await PaymentRequest.updateOne({ _id: payment._id, state: "PROCESSING" }, { $set: { state: "SUCCESS" } }, { session });
             return;
           }
-          const capture = await paymentProvider.capturePayment(payment.customerId.toString(), merchant._id.toString(), payment.amountPaisa, session);
-          [transaction] = await Transaction.create([{
-            transactionId: publicId("NHP"), customerId: payment.customerId, merchantId: merchant._id, paymentRequestId: payment._id,
+          const capture = await paymentProvider.capturePayment(authorizedCustomerId.toString(), merchant._id.toString(), payment.amountPaisa, session);
+          const [createdTransaction] = await Transaction.create([{
+            transactionId: publicId("NHP"), customerId: authorizedCustomerId, merchantId: merchant._id, paymentRequestId: payment._id,
             amountPaisa: payment.amountPaisa, type: "PAYMENT", status: "SUCCESS", palmVerificationId: payment.palmVerificationId,
             riskLevel: payment.riskLevel, riskScore: payment.riskScore, description: payment.description, orderReference: payment.orderReference,
             providerReference: capture.providerReference, providerMode: capture.mode, completedAt: new Date(),
           }], { session });
+          if (!createdTransaction) throw new AppError(500, "TRANSACTION_CREATE_FAILED", "Payment transaction could not be created.");
+          processingResult.transactionId = createdTransaction.transactionId;
           const completed = await PaymentRequest.updateOne({ _id: payment._id, state: "PROCESSING" }, { $set: { state: "SUCCESS", providerReference: capture.providerReference } }, { session });
           if (completed.modifiedCount !== 1) throw new AppError(409, "PAYMENT_STATE_RACE", "Payment state changed during processing.");
-          await Notification.create([{ userId: payment.customerId, type: "PAYMENT_SUCCESS", title: "Payment successful", message: `NPR ${fromPaisa(payment.amountPaisa).toLocaleString()} paid to ${merchant.businessName}.`, metadata: { transactionId: transaction.transactionId } }], { session });
+          await Notification.create([{ userId: authorizedCustomerId, type: "PAYMENT_SUCCESS", title: "Payment successful", message: `NPR ${fromPaisa(payment.amountPaisa).toLocaleString()} paid to ${merchant.businessName}.`, metadata: { transactionId: createdTransaction.transactionId } }], { session });
         });
       } finally {
         await session.endSession();
@@ -323,15 +333,18 @@ router.post("/requests/:id/confirm", rateLimit(20, 60_000), validate(idParams, "
     throw error;
   }
 
-  const wallet: any = await Wallet.findOne({ ownerType: "CUSTOMER", ownerId: payment.customerId }).lean();
-  await audit(req, "PAYMENT_SUCCESS", { type: "Transaction", id: transaction.transactionId }, { amountPaisa: payment.amountPaisa, providerMode: "MOCK" });
-  emitPayment(payment.publicId, "SUCCESS", { transactionId: transaction.transactionId });
-  res.json({ success: true, data: { state: "SUCCESS", transactionId: transaction.transactionId, amount: fromPaisa(payment.amountPaisa), remainingBalance: fromPaisa(wallet.balancePaisa), providerMode: "MOCK" } });
+  const transactionId = processingResult.transactionId;
+  if (!transactionId) throw new AppError(500, "PAYMENT_TRANSACTION_MISSING", "Payment transaction could not be finalized.");
+  const wallet = await Wallet.findOne({ ownerType: "CUSTOMER", ownerId: authorizedCustomerId }).lean();
+  if (!wallet) throw new AppError(500, "CUSTOMER_WALLET_MISSING", "Customer wallet could not be loaded after payment.");
+  await audit(req, "PAYMENT_SUCCESS", { type: "Transaction", id: transactionId }, { amountPaisa: payment.amountPaisa, providerMode: "MOCK" });
+  emitPayment(payment.publicId, "SUCCESS", { transactionId });
+  res.json({ success: true, data: { state: "SUCCESS", transactionId, amount: fromPaisa(payment.amountPaisa), remainingBalance: fromPaisa(wallet.balancePaisa), providerMode: "MOCK" } });
 }));
 
 router.post("/requests/:id/cancel", rateLimit(30, 60_000), validate(idParams, "params"), asyncHandler(async (req, res) => {
   const merchant = await getMerchant(req.auth!.userId);
-  const payment: any = await PaymentRequest.findOne({ publicId: req.params.id, merchantId: merchant._id });
+  const payment = await PaymentRequest.findOne({ publicId: req.params.id, merchantId: merchant._id });
   if (!payment) throw new AppError(404, "PAYMENT_NOT_FOUND", "Payment request was not found.");
   if (!["CREATED", "AWAITING_PALM", "CUSTOMER_IDENTIFIED", "RISK_CHECK", "AWAITING_CONFIRMATION", "AWAITING_PIN"].includes(payment.state)) throw new AppError(409, "INVALID_PAYMENT_STATE", "This payment can no longer be cancelled.");
   const previousState = payment.state;

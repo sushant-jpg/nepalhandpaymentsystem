@@ -17,7 +17,7 @@ export class MockPaymentProvider implements PaymentProvider {
   }
 
   async verifyPayment(customerId: string, amountPaisa: number) {
-    const wallet: any = await Wallet.findOne({ ownerType: "CUSTOMER", ownerId: customerId }).lean();
+    const wallet = await Wallet.findOne({ ownerType: "CUSTOMER", ownerId: customerId }).lean();
     if (!wallet || wallet.status !== "ACTIVE") throw new AppError(409, "WALLET_UNAVAILABLE", "Customer wallet is unavailable.");
     if (wallet.balancePaisa < amountPaisa) throw new AppError(409, "INSUFFICIENT_BALANCE", "Insufficient wallet balance.");
   }

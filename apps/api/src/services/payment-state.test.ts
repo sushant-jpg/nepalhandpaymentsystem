@@ -13,6 +13,12 @@ describe("payment state machine", () => {
     expect(canTransition("SUCCESS", "PROCESSING")).toBe(false);
     expect(() => transitionPayment({ state: "SUCCESS" }, "PROCESSING")).toThrow(AppError);
   });
+  it("rejects unsafe terminal and shortcut transitions", () => {
+    expect(canTransition("CREATED", "SUCCESS")).toBe(false);
+    expect(canTransition("EXPIRED", "PROCESSING")).toBe(false);
+    expect(canTransition("REFUNDED", "PROCESSING")).toBe(false);
+    expect(() => transitionPayment({ state: "CREATED" }, "SUCCESS")).toThrow(AppError);
+  });
   it("supports safe exits before processing", () => {
     expect(canTransition("AWAITING_PALM", "CANCELLED")).toBe(true);
     expect(canTransition("AWAITING_CONFIRMATION", "CANCELLED")).toBe(true);

@@ -6,12 +6,31 @@ import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Protocol, TypedDict
 
 import numpy as np
 from cryptography.fernet import Fernet, InvalidToken
 
 
-class TemplateStore:
+class PalmTemplate(TypedDict):
+    user_id: str
+    vector: np.ndarray
+    algorithm_version: str
+    enrolled_at: str
+
+
+class PalmTemplateRepository(Protocol):
+    """Durable template boundary; recognition code is storage-agnostic."""
+
+    def save(self, user_id: str, hand_side: str, algorithm_version: str, vector: np.ndarray, quality: float) -> str: ...
+    def get(self, user_id: str) -> PalmTemplate | None: ...
+    def list(self) -> list[PalmTemplate]: ...
+    def delete(self, user_id: str) -> bool: ...
+    def status(self, user_id: str) -> dict[str, str] | None: ...
+
+
+class SqlitePalmTemplateRepository:
+    """Encrypted SQLite implementation for local development and demos only."""
     def __init__(self, path: str, encryption_key: str):
         self.path = path
         Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -49,15 +68,20 @@ class TemplateStore:
             )
         return f"tpl:{hashlib.sha256(user_id.encode()).hexdigest()[:16]}"
 
-    def get(self, user_id: str) -> dict | None:
+    def get(self, user_id: str) -> PalmTemplate | None:
         with self._connect() as connection:
             row = connection.execute("SELECT * FROM palm_templates WHERE user_id = ?", (user_id,)).fetchone()
-        return self._decode(row) if row else None
+        if not row:
+            return None
+        try:
+            return self._decode(row)
+        except InvalidToken:
+            return None
 
-    def all(self) -> list[dict]:
+    def list(self) -> list[PalmTemplate]:
         with self._connect() as connection:
             rows = connection.execute("SELECT * FROM palm_templates").fetchall()
-        templates: list[dict] = []
+        templates: list[PalmTemplate] = []
         for row in rows:
             try:
                 templates.append(self._decode(row))
@@ -70,11 +94,16 @@ class TemplateStore:
             cursor = connection.execute("DELETE FROM palm_templates WHERE user_id = ?", (user_id,))
             return cursor.rowcount > 0
 
-    def status(self, user_id: str) -> dict | None:
+    def status(self, user_id: str) -> dict[str, str] | None:
         with self._connect() as connection:
             row = connection.execute("SELECT algorithm_version, enrolled_at FROM palm_templates WHERE user_id = ?", (user_id,)).fetchone()
         return dict(row) if row else None
 
-    def _decode(self, row: sqlite3.Row) -> dict:
+    def _decode(self, row: sqlite3.Row) -> PalmTemplate:
         raw = self.cipher.decrypt(row["encrypted_vector"])
         return {"user_id": row["user_id"], "vector": np.frombuffer(raw, dtype=np.float32).copy(), "algorithm_version": row["algorithm_version"], "enrolled_at": row["enrolled_at"]}
+
+
+# Compatibility alias for existing deployment and test configuration. New code
+# depends on PalmTemplateRepository rather than this concrete implementation.
+TemplateStore = SqlitePalmTemplateRepository

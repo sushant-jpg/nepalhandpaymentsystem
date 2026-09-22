@@ -8,7 +8,7 @@ import { AppError } from "../lib/errors.js";
 import { audit } from "../lib/audit.js";
 import { fromPaisa, toPaisa } from "../lib/money.js";
 import { publicId } from "../lib/ids.js";
-import { Merchant, Notification, PaymentRequest, Refund, Transaction } from "../models/index.js";
+import { Merchant, Notification, PaymentRequest, Refund, type RefundDocument, Transaction } from "../models/index.js";
 import { paymentProvider } from "../services/payment-provider.js";
 import { assertIdempotentReplay, requestHash, requireIdempotencyKey } from "../lib/idempotency.js";
 import { withDistributedLock } from "../lib/redis.js";
@@ -18,7 +18,7 @@ const router = Router();
 router.use(authenticate, authorize("MERCHANT"));
 
 async function ownMerchant(userId: string) {
-  const merchant: any = await Merchant.findOne({ userId });
+  const merchant = await Merchant.findOne({ userId });
   if (!merchant) throw new AppError(404, "MERCHANT_NOT_FOUND", "Merchant profile was not found.");
   return merchant;
 }
@@ -48,21 +48,21 @@ router.post("/refunds", rateLimit(10, 60_000), validate(z.object({ transactionId
   const merchant = await ownMerchant(req.auth!.userId);
   const idempotencyKey = requireIdempotencyKey(req);
   const bodyHash = requestHash(req.body);
-  const existing: any = await Refund.findOne({ merchantId: merchant._id, idempotencyKey }).select("+idempotencyRequestHash").lean();
+  const existing = await Refund.findOne({ merchantId: merchant._id, idempotencyKey }).select("+idempotencyRequestHash").lean();
   if (existing) {
     assertIdempotentReplay(existing.idempotencyRequestHash, bodyHash);
     return res.json({ success: true, data: { refundId: existing.refundId, status: existing.status, amount: fromPaisa(existing.amountPaisa), replayed: true } });
   }
-  const transaction: any = await Transaction.findOne({ transactionId: req.body.transactionId, merchantId: merchant._id });
+  const transaction = await Transaction.findOne({ transactionId: req.body.transactionId, merchantId: merchant._id });
   if (!transaction || !["SUCCESS", "PARTIALLY_REFUNDED"].includes(transaction.status)) throw new AppError(409, "NOT_REFUNDABLE", "Transaction is not refundable.");
   const amountPaisa = toPaisa(req.body.amount);
   if (transaction.refundedAmountPaisa + amountPaisa > transaction.amountPaisa) throw new AppError(400, "INVALID_REFUND_AMOUNT", "Refund exceeds the remaining refundable amount.");
-  let refund: any;
+  let refund: RefundDocument | null = null;
   try {
     refund = await Refund.create({ refundId: publicId("RFND"), transactionId: transaction._id, merchantId: merchant._id, amountPaisa, reason: req.body.reason, idempotencyKey, idempotencyRequestHash: bodyHash, status: "PROCESSING" });
   } catch (error) {
     if (typeof error === "object" && error !== null && "code" in error && error.code === 11000) {
-      const raced: any = await Refund.findOne({ merchantId: merchant._id, idempotencyKey }).select("+idempotencyRequestHash").lean();
+      const raced = await Refund.findOne({ merchantId: merchant._id, idempotencyKey }).select("+idempotencyRequestHash").lean();
       if (raced) {
         assertIdempotentReplay(raced.idempotencyRequestHash, bodyHash);
         return res.json({ success: true, data: { refundId: raced.refundId, status: raced.status, amount: fromPaisa(raced.amountPaisa), replayed: true } });
@@ -70,12 +70,13 @@ router.post("/refunds", rateLimit(10, 60_000), validate(z.object({ transactionId
     }
     throw error;
   }
+  if (!refund) throw new AppError(500, "REFUND_CREATE_FAILED", "Refund could not be created.");
   try {
     await withDistributedLock(`refund:${transaction.transactionId}`, 30_000, async () => {
       const session = await mongoose.startSession();
       try {
         await session.withTransaction(async () => {
-          const current: any = await Transaction.findById(transaction._id).session(session);
+          const current = await Transaction.findById(transaction._id).session(session);
           if (!current || !["SUCCESS", "PARTIALLY_REFUNDED"].includes(current.status)) throw new AppError(409, "NOT_REFUNDABLE", "Transaction is not refundable.");
           if (current.refundedAmountPaisa + amountPaisa > current.amountPaisa) throw new AppError(400, "INVALID_REFUND_AMOUNT", "Refund exceeds the remaining refundable amount.");
           const provider = await paymentProvider.refundPayment(current.customerId.toString(), merchant._id.toString(), amountPaisa, session);
