@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import hmac
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, status
@@ -14,7 +15,8 @@ ALGORITHM_VERSION = "prototype-rgb-v2"
 REQUIRED_THRESHOLD = float(os.getenv("PALM_MATCH_THRESHOLD", "0.88"))
 DUPLICATE_THRESHOLD = float(os.getenv("PALM_DUPLICATE_THRESHOLD", "0.97"))
 SERVICE_KEY = os.getenv("PALM_SERVICE_KEY", "local-service-key-change-me")
-store = TemplateStore(os.getenv("PALM_DATABASE_PATH", "data/palm.db"), os.getenv("PALM_TEMPLATE_ENCRYPTION_KEY", ""))
+default_database_path = Path(__file__).resolve().parent.parent / "data" / "palm.db"
+store = TemplateStore(os.getenv("PALM_DATABASE_PATH", str(default_database_path)), os.getenv("PALM_TEMPLATE_ENCRYPTION_KEY", ""))
 
 app = FastAPI(
     title="Nepal Hand Pay — Prototype Palm Recognition",

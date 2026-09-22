@@ -1,0 +1,267 @@
+{
+  "info": {
+    "_postman_id": "994a4437-61b7-4de3-b915-99c34b328f1e",
+    "name": "Nepal Hand Payment System",
+    "description": "Stateful happy-path and negative API checks for the educational Nepal Hand Pay prototype. Never run against production.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [{
+    "listen": "test",
+    "script": { "type": "text/javascript", "exec": [
+      "pm.test('Request ID is returned', function () { pm.expect(pm.response.headers.get('x-request-id')).to.be.a('string'); });",
+      "pm.test('Response time is below 5 seconds', function () { pm.expect(pm.response.responseTime).to.be.below(5000); });"
+    ] }
+  }],
+  "variable": [
+    { "key": "new_customer_email", "value": "" },
+    { "key": "new_customer_password", "value": "PostmanDemo123!" }
+  ],
+  "item": [
+    {
+      "name": "00 Health",
+      "item": [
+        {
+          "name": "Liveness",
+          "request": { "method": "GET", "url": "{{base_url}}/health/live", "description": "Process liveness; does not require dependencies." },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('API is live', () => pm.response.to.have.status(200));", "pm.test('Envelope is successful', () => pm.expect(pm.response.json().success).to.eql(true));"] } }]
+        },
+        {
+          "name": "Readiness",
+          "request": { "method": "GET", "url": "{{base_url}}/health/ready", "description": "Checks MongoDB and Redis readiness." },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('API is ready', () => pm.response.to.have.status(200));", "pm.test('Dependencies are connected', function () { const d=pm.response.json().data; pm.expect(d.database).to.eql('connected'); pm.expect(d.redis).to.eql('connected'); });"] } }]
+        }
+      ]
+    },
+    {
+      "name": "01 Auth",
+      "item": [
+        {
+          "name": "Customer Signup",
+          "event": [
+            { "listen": "prerequest", "script": { "exec": ["const email=`postman.${Date.now()}@example.test`; pm.collectionVariables.set('new_customer_email',email);"] } },
+            { "listen": "test", "script": { "exec": ["pm.test('Customer created', () => pm.response.to.have.status(201));", "const d=pm.response.json().data; pm.expect(d).to.have.property('accessToken'); pm.environment.set('customer_access_token',d.accessToken); pm.environment.set('access_token',d.accessToken); pm.environment.set('customer_id',d.user.id);"] } }
+          ],
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{new_customer_email}}\",\n  \"password\": \"{{new_customer_password}}\",\n  \"displayName\": \"Postman Customer\",\n  \"phone\": \"+9779800000000\",\n  \"role\": \"CUSTOMER\"\n}" }, "url": "{{base_url}}/auth/register" }
+        },
+        {
+          "name": "Customer Login",
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"email\":\"{{customer_email}}\",\"password\":\"{{demo_password}}\"}" }, "url": "{{base_url}}/auth/login" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Customer login succeeds', () => pm.response.to.have.status(200));", "const d=pm.response.json().data; pm.environment.set('customer_access_token',d.accessToken); pm.environment.set('access_token',d.accessToken); pm.environment.set('customer_id',d.user.id);"] } }]
+        },
+        {
+          "name": "Merchant Login",
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"email\":\"{{merchant_email}}\",\"password\":\"{{demo_password}}\"}" }, "url": "{{base_url}}/auth/login" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Merchant login succeeds', () => pm.response.to.have.status(200));", "const d=pm.response.json().data; pm.environment.set('merchant_access_token',d.accessToken); pm.environment.set('merchant_id',d.user.id);"] } }]
+        },
+        {
+          "name": "Refresh Session",
+          "request": { "method": "POST", "url": "{{base_url}}/auth/refresh", "description": "Uses the HTTP-only refresh cookie in Postman's cookie jar." },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Refresh rotates the session', () => pm.response.to.have.status(200));", "pm.environment.set('access_token',pm.response.json().data.accessToken);"] } }]
+        },
+        {
+          "name": "Forgot Password",
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"email\":\"unknown@example.test\"}" }, "url": "{{base_url}}/auth/forgot-password" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Response does not enumerate accounts', () => pm.response.to.have.status(200));", "pm.expect(pm.response.json().data.message).to.include('If an account exists');"] } }]
+        }
+      ]
+    },
+    {
+      "name": "02 Customer",
+      "item": [
+        {
+          "name": "Profile",
+          "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{customer_access_token}}" }], "url": "{{base_url}}/users/profile" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Customer profile is scoped', () => pm.response.to.have.status(200));", "pm.expect(pm.response.json().data.role).to.eql('CUSTOMER');"] } }]
+        },
+        {
+          "name": "Set Payment PIN",
+          "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{customer_access_token}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"password\":\"{{demo_password}}\",\"pin\":\"{{payment_pin}}\"}" }, "url": "{{base_url}}/users/payment-pin" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('PIN update is authorized', () => pm.response.to.have.status(200));"] } }]
+        },
+        {
+          "name": "Notifications",
+          "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{customer_access_token}}" }], "url": "{{base_url}}/users/notifications" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Notifications are returned', () => pm.response.to.have.status(200));", "pm.expect(pm.response.json().data).to.be.an('array');"] } }]
+        }
+      ]
+    },
+    {
+      "name": "03 Merchant",
+      "item": [
+        {
+          "name": "Merchant Dashboard",
+          "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{merchant_access_token}}" }], "url": "{{base_url}}/merchants/dashboard" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Merchant dashboard loads', () => pm.response.to.have.status(200));", "pm.expect(pm.response.json().data).to.have.property('metrics');"] } }]
+        }
+      ]
+    },
+    {
+      "name": "04 Palm",
+      "item": [
+        {
+          "name": "Enrollment Status",
+          "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{customer_access_token}}" }], "url": "{{base_url}}/palm/status" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Palm status is readable', () => pm.response.to.have.status(200));", "pm.expect(pm.response.json().data).to.have.property('enrolled');"] } }]
+        },
+        {
+          "name": "Enroll Palm",
+          "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{customer_access_token}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"handSide\":\"RIGHT\",\"consent\":true,\"samples\":[\"{{palm_sample_1}}\",\"{{palm_sample_2}}\",\"{{palm_sample_3}}\"]}" }, "url": "{{base_url}}/palm/enroll", "description": "Requires three real data:image/... samples. Raw images are processed in memory." },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Palm enrollment succeeds', () => pm.expect(pm.response.code).to.be.oneOf([200,201,409]));"] } }]
+        }
+      ]
+    },
+    {
+      "name": "05 Payments",
+      "item": [
+        {
+          "name": "Create Payment",
+          "event": [
+            { "listen": "prerequest", "script": { "exec": ["pm.environment.set('idempotency_key',pm.variables.replaceIn('{{$guid}}'));"] } },
+            { "listen": "test", "script": { "exec": ["pm.test('Payment is created', () => pm.expect(pm.response.code).to.be.oneOf([200,201]));", "const d=pm.response.json().data; pm.expect(d).to.have.property('id'); pm.environment.set('payment_id',d.id);"] } }
+          ],
+          "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{merchant_access_token}}" }, { "key": "Idempotency-Key", "value": "{{idempotency_key}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"amount\":125.50,\"description\":\"Postman demo payment\",\"orderReference\":\"POSTMAN-{{$timestamp}}\"}" }, "url": "{{base_url}}/payments/requests" }
+        },
+        {
+          "name": "Palm Authentication and Risk Check",
+          "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{merchant_access_token}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"image\":\"{{palm_probe}}\"}" }, "url": "{{base_url}}/payments/requests/{{payment_id}}/identify" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Customer is identified or safely rejected', () => pm.expect(pm.response.code).to.be.oneOf([200,401,422,423]));", "if(pm.response.code===200){const d=pm.response.json().data;pm.expect(d).to.have.property('riskLevel');pm.environment.set('confirmation_token',d.confirmationToken);pm.environment.set('development_otp',d.developmentOtp||'');pm.environment.set('process_idempotency_key',pm.variables.replaceIn('{{$guid}}'));}"] } }]
+        },
+        {
+          "name": "Confirm PIN and Process",
+          "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{merchant_access_token}}" }, { "key": "Idempotency-Key", "value": "{{process_idempotency_key}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"confirmationToken\":\"{{confirmation_token}}\",\"decision\":\"CONFIRM\",\"pin\":\"{{payment_pin}}\",\"otp\":\"{{development_otp}}\"}" }, "url": "{{base_url}}/payments/requests/{{payment_id}}/confirm" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Payment is processed exactly once', () => pm.expect(pm.response.code).to.be.oneOf([200,202]));", "const d=pm.response.json().data;if(d.transactionId)pm.environment.set('transaction_id',d.transactionId);"] } }]
+        },
+        {
+          "name": "Payment Status",
+          "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{merchant_access_token}}" }], "url": "{{base_url}}/payments/requests/{{payment_id}}" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Payment state is server authoritative', () => pm.response.to.have.status(200));", "const d=pm.response.json().data;pm.expect(d).to.have.property('state');if(d.transactionId)pm.environment.set('transaction_id',d.transactionId);"] } }]
+        }
+      ]
+    },
+    {
+      "name": "06 Wallet",
+      "item": [
+        {
+          "name": "Customer Wallet",
+          "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{customer_access_token}}" }], "url": "{{base_url}}/users/wallet" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Wallet balance is server supplied', () => pm.response.to.have.status(200));", "pm.expect(pm.response.json().data.balance).to.be.a('number');"] } }]
+        }
+      ]
+    },
+    {
+      "name": "07 Refunds",
+      "item": [
+        {
+          "name": "Refund Payment",
+          "event": [{ "listen": "prerequest", "script": { "exec": ["pm.environment.set('refund_idempotency_key',pm.variables.replaceIn('{{$guid}}'));"] } }, { "listen": "test", "script": { "exec": ["pm.test('Refund is recorded', () => pm.expect(pm.response.code).to.be.oneOf([200,201]));", "const d=pm.response.json().data;pm.environment.set('refund_id',d.refundId);"] } }],
+          "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{merchant_access_token}}" }, { "key": "Idempotency-Key", "value": "{{refund_idempotency_key}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"transactionId\":\"{{transaction_id}}\",\"amount\":25.50,\"reason\":\"Postman partial refund\"}" }, "url": "{{base_url}}/merchants/refunds" }
+        }
+      ]
+    },
+    {
+      "name": "08 Admin",
+      "item": [
+        {
+          "name": "Admin Login",
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"email\":\"{{admin_email}}\",\"password\":\"{{demo_password}}\"}" }, "url": "{{base_url}}/auth/login" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Admin signs in', () => pm.response.to.have.status(200));", "pm.environment.set('admin_access_token',pm.response.json().data.accessToken);"] } }]
+        },
+        {
+          "name": "Admin Dashboard",
+          "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{admin_access_token}}" }], "url": "{{base_url}}/admin/dashboard" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Operational metrics load', () => pm.response.to.have.status(200));", "pm.expect(pm.response.json().data).to.have.property('metrics');"] } }]
+        },
+        {
+          "name": "Add Idempotent Demo Funds",
+          "event": [{ "listen": "prerequest", "script": { "exec": ["pm.environment.set('idempotency_key',pm.variables.replaceIn('{{$guid}}'));"] } }, { "listen": "test", "script": { "exec": ["pm.test('Demo credit succeeds', () => pm.response.to.have.status(200));"] } }],
+          "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{admin_access_token}}" }, { "key": "Idempotency-Key", "value": "{{idempotency_key}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"userId\":\"{{customer_id}}\",\"amount\":1000}" }, "url": "{{base_url}}/admin/demo-funds" }
+        }
+      ]
+    },
+    {
+      "name": "09 Auditor",
+      "item": [
+        {
+          "name": "Auditor Login",
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"email\":\"{{auditor_email}}\",\"password\":\"{{demo_password}}\"}" }, "url": "{{base_url}}/auth/login" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Auditor signs in', () => pm.response.to.have.status(200));", "pm.environment.set('auditor_access_token',pm.response.json().data.accessToken);"] } }]
+        },
+        {
+          "name": "Read Audit Trail",
+          "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{auditor_access_token}}" }], "url": "{{base_url}}/security/audit?limit=25" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Auditor has read access', () => pm.response.to.have.status(200));", "pm.expect(pm.response.json().data.items).to.be.an('array');"] } }]
+        },
+        {
+          "name": "Auditor Cannot Mutate User",
+          "request": { "method": "PATCH", "header": [{ "key": "Authorization", "value": "Bearer {{auditor_access_token}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"status\":\"FROZEN\"}" }, "url": "{{base_url}}/admin/users/{{customer_id}}/status" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Auditor remains read-only', () => pm.response.to.have.status(403));"] } }]
+        }
+      ]
+    },
+    {
+      "name": "10 Risk",
+      "item": [
+        {
+          "name": "Risk Alerts",
+          "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{auditor_access_token}}" }], "url": "{{base_url}}/security/alerts" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Risk reasons are inspectable', () => pm.response.to.have.status(200));", "pm.expect(pm.response.json().data).to.be.an('array');"] } }]
+        }
+      ]
+    },
+    {
+      "name": "11 Security",
+      "item": [
+        {
+          "name": "Security Events",
+          "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{auditor_access_token}}" }], "url": "{{base_url}}/security/events?limit=25" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Security events are paginated', () => pm.response.to.have.status(200));", "pm.expect(pm.response.json().data.pagination.limit).to.eql(25);"] } }]
+        }
+      ]
+    },
+    {
+      "name": "12 Negative Tests",
+      "item": [
+        {
+          "name": "Invalid Login",
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"email\":\"nobody@example.test\",\"password\":\"WrongPassword123!\"}" }, "url": "{{base_url}}/auth/login" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Invalid credentials are rejected', () => pm.response.to.have.status(401));", "pm.expect(pm.response.json().error.code).to.eql('INVALID_CREDENTIALS');"] } }]
+        },
+        {
+          "name": "Missing Token",
+          "request": { "method": "GET", "url": "{{base_url}}/users/profile" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Authentication is required', () => pm.response.to.have.status(401));"] } }]
+        },
+        {
+          "name": "Invalid Token",
+          "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer invalid.jwt.token" }], "url": "{{base_url}}/users/profile" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Invalid token is rejected', () => pm.response.to.have.status(401));"] } }]
+        },
+        {
+          "name": "Customer Cannot Access Admin",
+          "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{customer_access_token}}" }], "url": "{{base_url}}/admin/dashboard" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Wrong role is forbidden', () => pm.response.to.have.status(403));"] } }]
+        },
+        {
+          "name": "Negative Payment Amount",
+          "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{merchant_access_token}}" }, { "key": "Idempotency-Key", "value": "negative-{{$guid}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"amount\":-1}" }, "url": "{{base_url}}/payments/requests" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Negative money is rejected', () => pm.response.to.have.status(400));", "pm.expect(pm.response.json().error.code).to.eql('VALIDATION_ERROR');"] } }]
+        },
+        {
+          "name": "Missing Idempotency Key",
+          "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{merchant_access_token}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"amount\":10}" }, "url": "{{base_url}}/payments/requests" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Financial write requires a key', () => pm.response.to.have.status(400));", "pm.expect(pm.response.json().error.code).to.eql('IDEMPOTENCY_KEY_REQUIRED');"] } }]
+        },
+        {
+          "name": "Malformed Registration",
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"email\":\"not-an-email\"}" }, "url": "{{base_url}}/auth/register" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Malformed input is rejected', () => pm.response.to.have.status(400));"] } }]
+        },
+        {
+          "name": "Invalid Object ID",
+          "request": { "method": "PATCH", "header": [{ "key": "Authorization", "value": "Bearer {{admin_access_token}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\"status\":\"FROZEN\"}" }, "url": "{{base_url}}/admin/users/not-an-object-id/status" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Invalid identifier is safe', () => pm.response.to.have.status(400));"] } }]
+        }
+      ]
+    }
+  ]
+}

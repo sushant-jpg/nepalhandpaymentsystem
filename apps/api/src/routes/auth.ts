@@ -1,4 +1,5 @@
 import { Router } from "express";
+import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { nanoid } from "nanoid";
@@ -60,24 +61,31 @@ router.post("/register", rateLimit(10, 60_000), validate(registerSchema), asyncH
   const existing = await User.exists({ email: req.body.email });
   if (existing) throw new AppError(409, "EMAIL_EXISTS", "An account already exists for this email.");
   const verificationToken = randomToken();
-  const user = await User.create({
-    email: req.body.email,
-    passwordHash: await bcrypt.hash(req.body.password, 12),
-    displayName: req.body.displayName,
-    phone: req.body.phone,
-    role: req.body.role,
-    status: "ACTIVE",
-    emailVerificationTokenHash: hashToken(verificationToken),
-    emailVerificationExpiresAt: new Date(Date.now() + 24 * 3_600_000),
-  });
-  if (req.body.role === "CUSTOMER") {
-    await Promise.all([
-      CustomerProfile.create({ userId: user._id }),
-      Wallet.create({ walletId: publicId("NHPW"), ownerType: "CUSTOMER", ownerId: user._id, balancePaisa: 0 }),
-    ]);
-  } else {
-    const merchant = await Merchant.create({ userId: user._id, businessName: req.body.businessName, approvalStatus: "PENDING" });
-    await Wallet.create({ walletId: publicId("NHPMW"), ownerType: "MERCHANT", ownerId: merchant._id, balancePaisa: 0 });
+  const passwordHash = await bcrypt.hash(req.body.password, 12);
+  const mongoSession = await mongoose.startSession();
+  let user: any;
+  try {
+    await mongoSession.withTransaction(async () => {
+      [user] = await User.create([{
+        email: req.body.email,
+        passwordHash,
+        displayName: req.body.displayName,
+        phone: req.body.phone,
+        role: req.body.role,
+        status: "ACTIVE",
+        emailVerificationTokenHash: hashToken(verificationToken),
+        emailVerificationExpiresAt: new Date(Date.now() + 24 * 3_600_000),
+      }], { session: mongoSession });
+      if (req.body.role === "CUSTOMER") {
+        await CustomerProfile.create([{ userId: user._id }], { session: mongoSession });
+        await Wallet.create([{ walletId: publicId("NHPW"), ownerType: "CUSTOMER", ownerId: user._id, balancePaisa: 0 }], { session: mongoSession });
+      } else {
+        const [merchant] = await Merchant.create([{ userId: user._id, businessName: req.body.businessName, approvalStatus: "PENDING" }], { session: mongoSession });
+        await Wallet.create([{ walletId: publicId("NHPMW"), ownerType: "MERCHANT", ownerId: merchant._id, balancePaisa: 0 }], { session: mongoSession });
+      }
+    });
+  } finally {
+    await mongoSession.endSession();
   }
   req.auth = { userId: user._id.toString(), role: user.role, email: user.email };
   await audit(req, "USER_REGISTERED", { type: "User", id: user._id.toString() });
@@ -116,10 +124,15 @@ router.post("/refresh", rateLimit(30, 60_000), asyncHandler(async (req, res) => 
   if (!token) throw new AppError(401, "REFRESH_REQUIRED", "Refresh session is missing.");
   let payload;
   try { payload = verifyRefreshToken(token); } catch { throw new AppError(401, "INVALID_REFRESH", "Refresh session has expired."); }
-  const saved: any = await RefreshToken.findOne({ tokenHash: hashToken(token), jti: payload.jti, revokedAt: { $exists: false } });
-  if (!saved) throw new AppError(401, "REFRESH_REUSED", "Refresh session is no longer valid.");
-  saved.revokedAt = new Date();
-  await saved.save();
+  const saved: any = await RefreshToken.findOneAndUpdate(
+    { tokenHash: hashToken(token), jti: payload.jti, revokedAt: { $exists: false } },
+    { $set: { revokedAt: new Date() } },
+    { new: true },
+  );
+  if (!saved) {
+    await RefreshToken.updateMany({ userId: payload.sub, revokedAt: { $exists: false } }, { $set: { revokedAt: new Date() } });
+    throw new AppError(401, "REFRESH_REUSED", "Refresh session is no longer valid. All refresh sessions were revoked.");
+  }
   const user: any = await User.findById(payload.sub);
   if (!user || user.status !== "ACTIVE") throw new AppError(401, "ACCOUNT_UNAVAILABLE", "Account is unavailable.");
   res.json({ success: true, data: await issueSession(req, res, user) });

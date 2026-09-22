@@ -12,6 +12,7 @@ import { Merchant, Notification, PaymentRequest, Refund, Transaction } from "../
 import { paymentProvider } from "../services/payment-provider.js";
 import { assertIdempotentReplay, requestHash, requireIdempotencyKey } from "../lib/idempotency.js";
 import { withDistributedLock } from "../lib/redis.js";
+import { rateLimit } from "../middleware/rate-limit.js";
 
 const router = Router();
 router.use(authenticate, authorize("MERCHANT"));
@@ -43,7 +44,7 @@ router.patch("/profile", validate(z.object({ businessName: z.string().trim().min
   res.json({ success: true, data: merchant });
 }));
 
-router.post("/refunds", validate(z.object({ transactionId: z.string().min(10), amount: z.number().positive(), reason: z.string().trim().min(4).max(300) })), asyncHandler(async (req, res) => {
+router.post("/refunds", rateLimit(10, 60_000), validate(z.object({ transactionId: z.string().min(10), amount: z.number().positive(), reason: z.string().trim().min(4).max(300) })), asyncHandler(async (req, res) => {
   const merchant = await ownMerchant(req.auth!.userId);
   const idempotencyKey = requireIdempotencyKey(req);
   const bodyHash = requestHash(req.body);

@@ -9,6 +9,7 @@ const AuditPage = lazy(() => import("./pages/AuditPage").then((module) => ({ def
 const LoginPage = lazy(() => import("./pages/AuthPages").then((module) => ({ default: module.LoginPage })));
 const RegisterPage = lazy(() => import("./pages/AuthPages").then((module) => ({ default: module.RegisterPage })));
 const ForgotPasswordPage = lazy(() => import("./pages/AuthPages").then((module) => ({ default: module.ForgotPasswordPage })));
+const ResetPasswordPage = lazy(() => import("./pages/AuthPages").then((module) => ({ default: module.ResetPasswordPage })));
 const DashboardPage = lazy(() => import("./pages/DashboardPage").then((module) => ({ default: module.DashboardPage })));
 const LandingPage = lazy(() => import("./pages/LandingPage").then((module) => ({ default: module.LandingPage })));
 const PalmPage = lazy(() => import("./pages/PalmPage").then((module) => ({ default: module.PalmPage })));
@@ -36,6 +37,7 @@ export default function App() {
     <Route path="/login" element={<LoginPage />} />
     <Route path="/register" element={<RegisterPage />} />
     <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+    <Route path="/reset-password" element={<ResetPasswordPage />} />
     <Route path="/app" element={<Protected />}>
       <Route index element={<DashboardPage />} />
       <Route path="wallet" element={<RoleRoute roles={["CUSTOMER"]}><WalletPage /></RoleRoute>} />

@@ -8,12 +8,14 @@ import { fromPaisa } from "../lib/money.js";
 import { Merchant, Transaction, User } from "../models/index.js";
 import { audit, securityEvent } from "../lib/audit.js";
 import { validate } from "../middleware/validate.js";
+import { decodeDateCursor, encodeDateCursor } from "../lib/cursor.js";
 
 const router = Router();
 router.use(authenticate);
 
 const querySchema = z.object({
   page: z.coerce.number().int().min(1).default(1), limit: z.coerce.number().int().min(1).max(100).default(20),
+  cursor: z.string().min(8).max(512).optional(),
   status: z.enum(["PENDING", "PROCESSING", "SUCCESS", "FAILED", "CANCELLED", "EXPIRED", "REFUNDED", "PARTIALLY_REFUNDED"]).optional(),
   riskLevel: z.enum(["LOW", "MEDIUM", "HIGH", "BLOCKED"]).optional(),
   dateFrom: z.coerce.date().optional(), dateTo: z.coerce.date().optional(), minAmount: z.coerce.number().min(0).optional(), maxAmount: z.coerce.number().min(0).optional(),
@@ -34,12 +36,20 @@ router.get("/", asyncHandler(async (req, res) => {
   if (q.status) filter.status = q.status;
   if (q.riskLevel) filter.riskLevel = q.riskLevel;
   if (q.dateFrom || q.dateTo) filter.createdAt = { ...(q.dateFrom ? { $gte: q.dateFrom } : {}), ...(q.dateTo ? { $lte: q.dateTo } : {}) };
+  if (q.cursor) {
+    const cursor = decodeDateCursor(q.cursor);
+    filter.$and = [{ $or: [{ createdAt: { $lt: cursor.createdAt } }, { createdAt: cursor.createdAt, _id: { $lt: cursor.id } }] }];
+  }
   if (q.minAmount !== undefined || q.maxAmount !== undefined) filter.amountPaisa = { ...(q.minAmount !== undefined ? { $gte: Math.round(q.minAmount * 100) } : {}), ...(q.maxAmount !== undefined ? { $lte: Math.round(q.maxAmount * 100) } : {}) };
-  const [items, total] = await Promise.all([
-    Transaction.find(filter).populate("customerId", "displayName").populate("merchantId", "businessName").sort({ createdAt: -1 }).skip((q.page - 1) * q.limit).limit(q.limit).lean(),
-    Transaction.countDocuments(filter),
+  const [rows, total] = await Promise.all([
+    Transaction.find(filter).populate("customerId", "displayName").populate("merchantId", "businessName").sort({ createdAt: -1, _id: -1 }).skip(q.cursor ? 0 : (q.page - 1) * q.limit).limit(q.limit + 1).lean(),
+    q.cursor ? Promise.resolve(undefined) : Transaction.countDocuments(filter),
   ]);
-  res.json({ success: true, data: { items: items.map((item: any) => ({ id: item._id, transactionId: item.transactionId, customerName: item.customerId?.displayName, merchantName: item.merchantId?.businessName, amount: fromPaisa(item.amountPaisa), currency: item.currency, status: item.status, riskLevel: item.riskLevel, createdAt: item.createdAt })), pagination: { page: q.page, limit: q.limit, total, pages: Math.ceil(total / q.limit) } } });
+  const hasMore = rows.length > q.limit;
+  const items = hasMore ? rows.slice(0, q.limit) : rows;
+  const last = items.at(-1);
+  const nextCursor = hasMore && last ? encodeDateCursor({ createdAt: new Date(last.createdAt), id: String(last._id) }) : null;
+  res.json({ success: true, data: { items: items.map((item: any) => ({ id: item._id, transactionId: item.transactionId, customerName: item.customerId?.displayName, merchantName: item.merchantId?.businessName, amount: fromPaisa(item.amountPaisa), currency: item.currency, status: item.status, riskLevel: item.riskLevel, createdAt: item.createdAt })), pagination: { page: q.cursor ? undefined : q.page, limit: q.limit, total, pages: total === undefined ? undefined : Math.ceil(total / q.limit), nextCursor } } });
 }));
 
 async function authorizedTransaction(req: any) {

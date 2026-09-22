@@ -20,6 +20,7 @@ const schema = z.object({
   OTP_TTL_SECONDS: z.coerce.number().int().min(60).max(900).default(300),
   PIN_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(5),
   PIN_LOCKOUT_SECONDS: z.coerce.number().int().min(60).max(3600).default(900),
+  PAYMENT_CLEANUP_INTERVAL_SECONDS: z.coerce.number().int().min(15).max(3600).default(60),
   RISK_MEDIUM_THRESHOLD: z.coerce.number().min(1).max(100).default(30),
   RISK_HIGH_THRESHOLD: z.coerce.number().min(1).max(100).default(60),
   RISK_BLOCKED_THRESHOLD: z.coerce.number().min(1).max(100).default(80),

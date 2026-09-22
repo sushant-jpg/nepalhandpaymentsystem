@@ -7,7 +7,7 @@ const userSchema = new Schema({
   email: { type: String, required: true, unique: true, lowercase: true, trim: true, index: true },
   passwordHash: { type: String, required: true, select: false },
   displayName: { type: String, required: true, trim: true, maxlength: 100 },
-  phone: { type: String, trim: true, maxlength: 30 },
+  phone: { type: String, trim: true, maxlength: 30, index: { sparse: true } },
   role: { type: String, enum: ["CUSTOMER", "MERCHANT", "ADMIN", "AUDITOR"], required: true, index: true },
   status: { type: String, enum: ["PENDING", "ACTIVE", "FROZEN", "SUSPENDED"], default: "PENDING", index: true },
   emailVerified: { type: Boolean, default: false },
@@ -81,6 +81,9 @@ const transactionSchema = new Schema({
 }, timestamps);
 transactionSchema.index({ customerId: 1, createdAt: -1 });
 transactionSchema.index({ merchantId: 1, createdAt: -1 });
+transactionSchema.index({ customerId: 1, status: 1, createdAt: -1 });
+transactionSchema.index({ merchantId: 1, status: 1, createdAt: -1 });
+transactionSchema.index({ riskLevel: 1, createdAt: -1 });
 
 const palmEnrollmentSchema = new Schema({
   palmEnrollmentId: { type: String, required: true, unique: true, index: true },
@@ -114,7 +117,7 @@ const paymentRequestSchema = new Schema({
   amountPaisa: { type: Number, required: true, min: 1, validate: Number.isSafeInteger },
   currency: { type: String, enum: ["NPR"], default: "NPR" },
   description: { type: String, maxlength: 180 },
-  state: { type: String, enum: ["CREATED", "AWAITING_PALM", "CUSTOMER_IDENTIFIED", "AWAITING_CONFIRMATION", "PROCESSING", "SUCCESS", "FAILED", "CANCELLED", "EXPIRED", "REFUNDED", "PARTIALLY_REFUNDED"], default: "CREATED", index: true },
+  state: { type: String, enum: ["CREATED", "AWAITING_PALM", "CUSTOMER_IDENTIFIED", "RISK_CHECK", "AWAITING_CONFIRMATION", "AWAITING_PIN", "PROCESSING", "SUCCESS", "FAILED", "CANCELLED", "EXPIRED", "REFUNDED", "PARTIALLY_REFUNDED"], default: "CREATED", index: true },
   idempotencyKey: { type: String, required: true },
   idempotencyRequestHash: { type: String, required: true, select: false },
   processIdempotencyKey: { type: String, select: false },
@@ -135,6 +138,7 @@ const paymentRequestSchema = new Schema({
 }, timestamps);
 paymentRequestSchema.index({ merchantId: 1, idempotencyKey: 1 }, { unique: true });
 paymentRequestSchema.index({ merchantId: 1, processIdempotencyKey: 1 }, { unique: true, sparse: true });
+paymentRequestSchema.index({ state: 1, expiresAt: 1 });
 
 const refundSchema = new Schema({
   refundId: { type: String, required: true, unique: true, index: true },
@@ -161,6 +165,8 @@ const securityEventSchema = new Schema({
   metadata: { type: Schema.Types.Mixed, default: {} },
 }, timestamps);
 securityEventSchema.index({ createdAt: -1 });
+securityEventSchema.index({ userId: 1, createdAt: -1 });
+securityEventSchema.index({ category: 1, createdAt: -1 });
 
 const fraudAlertSchema = new Schema({
   userId: { type: objectId, ref: "User", index: true },
@@ -185,6 +191,8 @@ const auditLogSchema = new Schema({
   metadata: { type: Schema.Types.Mixed, default: {} },
 }, { timestamps: { createdAt: true, updatedAt: false } });
 auditLogSchema.index({ createdAt: -1 });
+auditLogSchema.index({ actorId: 1, createdAt: -1 });
+auditLogSchema.index({ action: 1, createdAt: -1 });
 for (const operation of ["updateOne", "updateMany", "findOneAndUpdate", "findOneAndDelete", "deleteOne", "deleteMany", "replaceOne"] as const) {
   auditLogSchema.pre(operation, function () {
     throw new Error("Audit logs are append-only and cannot be modified.");
@@ -218,6 +226,18 @@ const systemConfigSchema = new Schema({
   updatedBy: { type: objectId, ref: "User" },
 }, timestamps);
 
+const idempotencyRecordSchema = new Schema({
+  idempotencyKey: { type: String, required: true },
+  userId: { type: objectId, ref: "User", required: true, index: true },
+  endpoint: { type: String, required: true },
+  requestHash: { type: String, required: true, select: false },
+  response: { type: Schema.Types.Mixed },
+  statusCode: Number,
+  status: { type: String, enum: ["PENDING", "COMPLETED", "FAILED"], default: "PENDING", index: true },
+  expiresAt: { type: Date, required: true, index: { expires: 0 } },
+}, timestamps);
+idempotencyRecordSchema.index({ userId: 1, endpoint: 1, idempotencyKey: 1 }, { unique: true });
+
 type AnyModel = mongoose.Model<any>;
 export const User = (models.User || model("User", userSchema)) as AnyModel;
 export const CustomerProfile = (models.CustomerProfile || model("CustomerProfile", customerProfileSchema)) as AnyModel;
@@ -234,5 +254,6 @@ export const AuditLog = (models.AuditLog || model("AuditLog", auditLogSchema)) a
 export const RefreshToken = (models.RefreshToken || model("RefreshToken", refreshTokenSchema)) as AnyModel;
 export const Notification = (models.Notification || model("Notification", notificationSchema)) as AnyModel;
 export const SystemConfig = (models.SystemConfig || model("SystemConfig", systemConfigSchema)) as AnyModel;
+export const IdempotencyRecord = (models.IdempotencyRecord || model("IdempotencyRecord", idempotencyRecordSchema)) as AnyModel;
 
 export const isValidId = (value: string) => mongoose.isValidObjectId(value);

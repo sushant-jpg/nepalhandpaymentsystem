@@ -22,7 +22,7 @@ flowchart LR
   Palm --> Templates[(Encrypted SQLite templates)]
 ```
 
-See [architecture](docs/architecture.md), [payment flow](docs/payment-flow.md), [palm authentication](docs/palm-authentication.md), [security](docs/security.md), [API](docs/api.md), and [deployment](docs/deployment.md).
+See [architecture](docs/architecture.md), [payment flow](docs/payment-flow.md), [palm authentication](docs/palm-authentication.md), [security](docs/security.md), [API](docs/api.md), [performance](docs/performance.md), and [deployment](docs/deployment.md).
 
 ## Features
 
@@ -46,16 +46,20 @@ packages/
 services/
   palm-recognition/        FastAPI, OpenCV, encrypted SQLite templates
 docs/                      Architecture and operational documentation
+postman/                   Stateful API collection and local environment
+tests/load/                Safe k6 read/create scenarios
+scripts/                   Cross-platform development helpers
 ```
 
 ## Local setup
 
-Requirements: Node.js 20+, npm 10+, Python 3.11+, MongoDB (replica set for transactions), and Redis. NumPy is pinned per Python compatibility range so Python 3.14 installations receive a wheel rather than an unsupported source build.
+Requirements: Node.js 20+, npm 10+, Python 3.11+, MongoDB (replica set for transactions), and Redis. NumPy and Pydantic are pinned per Python compatibility range so Python 3.14 installations receive compatible wheels rather than unsupported source builds.
 
 ```bash
 cp .env.example .env
 npm install
-python -m pip install -r services/palm-recognition/requirements.txt
+python -m venv .venv
+.venv/bin/python -m pip install -r services/palm-recognition/requirements.txt
 npm run typecheck
 npm test
 npm run test:palm
@@ -65,6 +69,7 @@ npm run dev
 Run `npm run seed` after MongoDB starts. The seed command prints generated development credentials unless `DEMO_SEED_PASSWORD` is set. Never use demo credentials outside local development.
 
 On Windows systems that block `npm.ps1`, use `npm.cmd` for the same commands.
+On Windows, the virtual-environment install command is `.venv\Scripts\python.exe -m pip install -r services/palm-recognition/requirements.txt`. Root palm scripts automatically prefer this local environment.
 
 ## Docker startup
 
@@ -105,7 +110,7 @@ All supported variables and safe development defaults are documented in [.env.ex
 - `/api/v1/admin/*` — metrics, user/merchant controls, demo funds, risk configuration.
 - `/api/v1/security/*` — scoped events, risk alerts, append-only audit views.
 
-Payment creation, confirmation, and refund requests require `Idempotency-Key`. See [API details](docs/api.md).
+Payment creation, confirmation, refunds, and administrative wallet credits require `Idempotency-Key`. See [API details](docs/api.md).
 
 ## Verification
 
@@ -115,8 +120,11 @@ npm run typecheck
 npm test
 npm run build
 npm run test:palm
+npm run validate:postman
 docker compose config
 ```
+
+With a live seeded stack, run `npm run test:postman`. See [postman/README.md](postman/README.md) for the full biometric flow. Safe k6 scenarios and measured-target guidance are in [tests/load/README.md](tests/load/README.md) and [docs/performance.md](docs/performance.md).
 
 ## Limitations and future work
 
@@ -124,6 +132,5 @@ docker compose config
 - Production use needs certified infrared palm-vein hardware, independent biometric evaluation, HSM/KMS-backed key management, key rotation, device attestation, and privacy/compliance review.
 - Production OTP delivery requires a verified SMS/email provider; local development exposes the code only in the response.
 - The mock wallet is not a ledger suitable for regulated funds. A real deployment needs double-entry accounting, reconciliation, settlement, disputes, and a licensed Nepal-compatible provider adapter.
-- Automated browser tests and full database integration tests should be expanded against disposable MongoDB/Redis services.
-
-Screenshot placeholders: `docs/screenshots/customer-dashboard.png`, `merchant-pos.png`, `admin-dashboard.png`.
+- Automated browser tests and full database integration tests should be expanded against disposable MongoDB/Redis services. The checked-in concurrency tests validate conditional-update behavior with deterministic doubles; they are not a substitute for distributed infrastructure tests.
+- No job queue is included yet because the prototype has no external email/SMS delivery. Payment and wallet consistency remain synchronous; add BullMQ workers only when real notification, analytics, or reconciliation workloads exist.

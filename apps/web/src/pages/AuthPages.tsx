@@ -4,6 +4,7 @@ import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { Brand } from "../components/Brand";
 import { Notice } from "../components/Ui";
 import { useAuth } from "../context/AuthContext";
+import { api } from "../lib/api";
 
 export function LoginPage() {
   const { user, login } = useAuth(); const navigate = useNavigate(); const [params] = useSearchParams();
@@ -26,7 +27,13 @@ function AuthShell({ title, detail, children }: { title: string; detail: string;
 }
 
 export function ForgotPasswordPage() {
-  const [message,setMessage]=useState(""); const [error,setError]=useState("");
-  async function submit(e:FormEvent<HTMLFormElement>){e.preventDefault(); const { api }=await import("../lib/api"); try{const result=await api.post<{message:string;developmentResetToken?:string}>("/auth/forgot-password",{email:new FormData(e.currentTarget).get("email")});setMessage(`${result.message}${result.developmentResetToken ? ` Development token: ${result.developmentResetToken}`:""}`)}catch(err){setError(err instanceof Error?err.message:"Request failed.")}}
-  return <AuthShell title="Reset your password" detail="Request a short-lived password reset token."><form onSubmit={submit} className="space-y-4">{message&&<Notice tone="success">{message}</Notice>}{error&&<Notice>{error}</Notice>}<label className="label">Email address<input name="email" type="email" className="input" required /></label><button className="btn-primary w-full">Create reset request</button><Link className="btn-secondary w-full" to="/login">Back to login</Link></form></AuthShell>;
+  const [message,setMessage]=useState(""); const [error,setError]=useState(""); const [busy,setBusy]=useState(false); const [developmentToken,setDevelopmentToken]=useState("");
+  async function submit(e:FormEvent<HTMLFormElement>){e.preventDefault();setBusy(true);setError("");try{const result=await api.post<{message:string;developmentResetToken?:string}>("/auth/forgot-password",{email:new FormData(e.currentTarget).get("email")});setMessage(result.message);setDevelopmentToken(result.developmentResetToken??"")}catch(err){setError(err instanceof Error?err.message:"Request failed.")}finally{setBusy(false)}}
+  return <AuthShell title="Reset your password" detail="Request a short-lived password reset token."><form onSubmit={submit} className="space-y-4">{message&&<Notice tone="success">{message}</Notice>}{error&&<Notice>{error}</Notice>}<label className="label">Email address<input name="email" type="email" className="input" required /></label><button className="btn-primary w-full" disabled={busy}>{busy?"Creating request…":"Create reset request"}</button>{developmentToken&&<Link className="btn-secondary w-full" to={`/reset-password?token=${encodeURIComponent(developmentToken)}`}>Continue with development token</Link>}<Link className="btn-secondary w-full" to="/login">Back to login</Link></form></AuthShell>;
+}
+
+export function ResetPasswordPage() {
+  const [params]=useSearchParams(); const navigate=useNavigate(); const [error,setError]=useState(""); const [busy,setBusy]=useState(false);
+  async function submit(event:FormEvent<HTMLFormElement>){event.preventDefault();const form=new FormData(event.currentTarget);const newPassword=String(form.get("password")??"");if(newPassword!==form.get("confirmPassword")){setError("Passwords do not match.");return}setBusy(true);setError("");try{await api.post("/auth/reset-password",{token:form.get("token"),password:newPassword});navigate("/login",{replace:true})}catch(caught){setError(caught instanceof Error?caught.message:"Password reset failed.")}finally{setBusy(false)}}
+  return <AuthShell title="Choose a new password" detail="Reset tokens expire after one hour and can be used only once."><form onSubmit={submit} className="space-y-4">{error&&<Notice>{error}</Notice>}<label className="label">Reset token<input name="token" className="input font-mono text-xs" defaultValue={params.get("token")??""} minLength={20} required /></label><label className="label">New password<input name="password" type="password" className="input" minLength={10} autoComplete="new-password" required /></label><label className="label">Confirm new password<input name="confirmPassword" type="password" className="input" minLength={10} autoComplete="new-password" required /></label><button className="btn-primary w-full" disabled={busy}>{busy?"Resetting…":"Reset password"}</button><Link className="btn-secondary w-full" to="/login">Back to login</Link></form></AuthShell>;
 }

@@ -25,9 +25,11 @@ jobs:
       - run: npm ci
       - run: python -m pip install -r services/palm-recognition/requirements.txt
       - run: npm run typecheck
+      - run: npm run lint
       - run: npm test
       - run: npm run build
-      - run: python -m pytest services/palm-recognition/tests
+      - run: npm run test:palm
+      - run: npm run validate:postman
       - name: Validate Docker Compose
         env:
           JWT_ACCESS_SECRET: ci-access-secret-with-at-least-32-characters

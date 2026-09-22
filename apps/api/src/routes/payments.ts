@@ -20,6 +20,7 @@ import { palmClient } from "../services/palm-client.js";
 import { assessPaymentRisk } from "../services/risk.js";
 import { paymentProvider } from "../services/payment-provider.js";
 import { transitionPayment } from "../services/payment-state.js";
+import { rateLimit } from "../middleware/rate-limit.js";
 
 const router = Router();
 router.use(authenticate, authorize("MERCHANT"));
@@ -60,7 +61,7 @@ async function existingTransactionResult(payment: any) {
   };
 }
 
-router.post("/requests", validate(z.object({
+router.post("/requests", rateLimit(60, 60_000), validate(z.object({
   amount: z.number().positive().max(1_000_000),
   description: z.string().trim().max(180).optional(),
   orderReference: z.string().trim().min(1).max(80).optional(),
@@ -116,7 +117,7 @@ router.get("/requests/:id", validate(idParams, "params"), asyncHandler(async (re
   res.json({ success: true, data: paymentData(payment, { transactionId: transaction?.transactionId, transactionStatus: transaction?.status }) });
 }));
 
-router.post("/requests/:id/identify", validate(idParams, "params"), validate(z.object({ image: dataImage })), asyncHandler(async (req, res) => {
+router.post("/requests/:id/identify", rateLimit(10, 60_000), validate(idParams, "params"), validate(z.object({ image: dataImage })), asyncHandler(async (req, res) => {
   const merchant = await getMerchant(req.auth!.userId);
   await withDistributedLock(`identify:${req.params.id}`, 20_000, async () => {
     const payment: any = await PaymentRequest.findOne({ publicId: req.params.id, merchantId: merchant._id }).select("+confirmationTokenHash");
@@ -160,6 +161,8 @@ router.post("/requests/:id/identify", validate(idParams, "params"), validate(z.o
     const risk = await assessPaymentRisk(match.userId, payment.amountPaisa, merchant.createdAt);
     payment.customerId = customer._id;
     payment.palmVerificationId = verification._id;
+    transitionPayment(payment, "CUSTOMER_IDENTIFIED");
+    transitionPayment(payment, "RISK_CHECK");
     payment.riskScore = risk.score;
     payment.riskLevel = risk.level;
     payment.requiresPin = risk.requiresPin;
@@ -175,8 +178,6 @@ router.post("/requests/:id/identify", validate(idParams, "params"), validate(z.o
 
     const confirmationToken = randomToken();
     payment.confirmationTokenHash = hashToken(confirmationToken);
-    transitionPayment(payment, "CUSTOMER_IDENTIFIED");
-    emitPayment(payment.publicId, "CUSTOMER_IDENTIFIED");
     transitionPayment(payment, "AWAITING_CONFIRMATION");
     await payment.save();
 
@@ -201,7 +202,7 @@ router.post("/requests/:id/identify", validate(idParams, "params"), validate(z.o
   });
 }));
 
-router.post("/requests/:id/confirm", validate(idParams, "params"), validate(z.object({
+router.post("/requests/:id/confirm", rateLimit(20, 60_000), validate(idParams, "params"), validate(z.object({
   confirmationToken: z.string().min(20), decision: z.enum(["CONFIRM", "DECLINE"]),
   pin: z.string().regex(/^\d{4,8}$/).optional(), otp: z.string().regex(/^\d{6}$/).optional(),
 })), asyncHandler(async (req, res) => {
@@ -220,7 +221,7 @@ router.post("/requests/:id/confirm", validate(idParams, "params"), validate(z.ob
   if (payment.processIdempotencyKey && payment.processIdempotencyKey !== idempotencyKey) throw new AppError(409, "IDEMPOTENCY_KEY_REUSED", "A different processing key already owns this payment.");
   assertIdempotentReplay(payment.processRequestHash, processHash);
   if (payment.state === "PROCESSING") return res.status(202).json({ success: true, data: paymentData(payment, { message: "Payment is still processing." }) });
-  if (payment.state !== "AWAITING_CONFIRMATION") throw new AppError(409, "INVALID_PAYMENT_STATE", `Payment cannot be confirmed while ${payment.state}.`);
+  if (!["AWAITING_CONFIRMATION", "AWAITING_PIN"].includes(payment.state)) throw new AppError(409, "INVALID_PAYMENT_STATE", `Payment cannot be confirmed while ${payment.state}.`);
   if (payment.expiresAt < new Date()) {
     transitionPayment(payment, "EXPIRED");
     await payment.save();
@@ -234,7 +235,7 @@ router.post("/requests/:id/confirm", validate(idParams, "params"), validate(z.ob
 
   if (req.body.decision === "DECLINE") {
     const declined = await PaymentRequest.findOneAndUpdate(
-      { _id: payment._id, state: "AWAITING_CONFIRMATION", confirmationTokenHash: payment.confirmationTokenHash },
+      { _id: payment._id, state: { $in: ["AWAITING_CONFIRMATION", "AWAITING_PIN"] }, confirmationTokenHash: payment.confirmationTokenHash },
       { $set: { state: "CANCELLED", processIdempotencyKey: idempotencyKey, processRequestHash: processHash }, $unset: { confirmationTokenHash: 1 } },
       { new: true },
     );
@@ -247,6 +248,11 @@ router.post("/requests/:id/confirm", validate(idParams, "params"), validate(z.ob
   const customer: any = await User.findById(payment.customerId).select("+paymentPinHash +failedPinAttempts +pinLockUntil");
   if (!customer) throw new AppError(403, "CUSTOMER_UNAVAILABLE", "Customer account is unavailable.");
   if (payment.requiresPin) {
+    if (payment.state === "AWAITING_CONFIRMATION") {
+      transitionPayment(payment, "AWAITING_PIN");
+      await payment.save();
+      emitPayment(payment.publicId, "AWAITING_PIN");
+    }
     if (customer.pinLockUntil && customer.pinLockUntil > new Date()) throw new AppError(423, "PAYMENT_PIN_LOCKED", "Payment PIN is temporarily locked.");
     if (!customer.paymentPinHash || !req.body.pin || !(await bcrypt.compare(req.body.pin, customer.paymentPinHash))) {
       customer.failedPinAttempts = (customer.failedPinAttempts ?? 0) + 1;
@@ -266,8 +272,9 @@ router.post("/requests/:id/confirm", validate(idParams, "params"), validate(z.ob
   }
 
   await paymentProvider.verifyPayment(payment.customerId.toString(), payment.amountPaisa);
+  const authorizationState = payment.requiresPin ? "AWAITING_PIN" : "AWAITING_CONFIRMATION";
   payment = await PaymentRequest.findOneAndUpdate(
-    { _id: payment._id, state: "AWAITING_CONFIRMATION", confirmationTokenHash: payment.confirmationTokenHash },
+    { _id: payment._id, state: authorizationState, confirmationTokenHash: payment.confirmationTokenHash },
     { $set: { state: "PROCESSING", confirmedAt: new Date(), processingStartedAt: new Date(), processIdempotencyKey: idempotencyKey, processRequestHash: processHash, ...(payment.requiresOtp ? { otpVerifiedAt: new Date() } : {}) }, $unset: { confirmationTokenHash: 1 } },
     { new: true },
   );
@@ -322,11 +329,11 @@ router.post("/requests/:id/confirm", validate(idParams, "params"), validate(z.ob
   res.json({ success: true, data: { state: "SUCCESS", transactionId: transaction.transactionId, amount: fromPaisa(payment.amountPaisa), remainingBalance: fromPaisa(wallet.balancePaisa), providerMode: "MOCK" } });
 }));
 
-router.post("/requests/:id/cancel", validate(idParams, "params"), asyncHandler(async (req, res) => {
+router.post("/requests/:id/cancel", rateLimit(30, 60_000), validate(idParams, "params"), asyncHandler(async (req, res) => {
   const merchant = await getMerchant(req.auth!.userId);
   const payment: any = await PaymentRequest.findOne({ publicId: req.params.id, merchantId: merchant._id });
   if (!payment) throw new AppError(404, "PAYMENT_NOT_FOUND", "Payment request was not found.");
-  if (!["CREATED", "AWAITING_PALM", "CUSTOMER_IDENTIFIED", "AWAITING_CONFIRMATION"].includes(payment.state)) throw new AppError(409, "INVALID_PAYMENT_STATE", "This payment can no longer be cancelled.");
+  if (!["CREATED", "AWAITING_PALM", "CUSTOMER_IDENTIFIED", "RISK_CHECK", "AWAITING_CONFIRMATION", "AWAITING_PIN"].includes(payment.state)) throw new AppError(409, "INVALID_PAYMENT_STATE", "This payment can no longer be cancelled.");
   const previousState = payment.state;
   transitionPayment(payment, "CANCELLED");
   const changed = await PaymentRequest.updateOne({ _id: payment._id, state: previousState }, { $set: { state: "CANCELLED" } });

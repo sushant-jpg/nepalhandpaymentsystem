@@ -30,7 +30,7 @@ app.use(pinoHttp({
     res.setHeader("x-request-id", id);
     return id;
   },
-  redact: ["req.headers.authorization", "req.headers.cookie", "req.body.password", "req.body.pin", "req.body.image", "req.body.samples", "res.headers.set-cookie"],
+  redact: ["req.headers.authorization", "req.headers.cookie", "req.body.password", "req.body.pin", "req.body.otp", "req.body.token", "req.body.confirmationToken", "req.body.image", "req.body.samples", "res.headers.set-cookie"],
 }));
 app.use((req, _res, next) => { req.requestId = String(req.id); next(); });
 

@@ -1,4 +1,5 @@
 import { Router } from "express";
+import mongoose from "mongoose";
 import { z } from "zod";
 import { asyncHandler } from "../lib/async-handler.js";
 import { authenticate, authorize } from "../middleware/auth.js";
@@ -7,6 +8,8 @@ import { AppError } from "../lib/errors.js";
 import { audit } from "../lib/audit.js";
 import { fromPaisa, toPaisa } from "../lib/money.js";
 import { FraudAlert, Merchant, Notification, PalmEnrollment, PalmVerification, PaymentRequest, Refund, SecurityEvent, SystemConfig, Transaction, User, Wallet } from "../models/index.js";
+import { beginIdempotentOperation, completeIdempotentOperation, failIdempotentOperation, requestHash, requireIdempotencyKey } from "../lib/idempotency.js";
+import { rateLimit } from "../middleware/rate-limit.js";
 
 const router = Router();
 router.use(authenticate, authorize("ADMIN"));
@@ -19,7 +22,7 @@ router.get("/dashboard", asyncHandler(async (_req, res) => {
     Transaction.countDocuments({ status: "SUCCESS", createdAt: { $gte: start } }),
     Transaction.aggregate([{ $match: { status: "SUCCESS", createdAt: { $gte: start } } }, { $group: { _id: null, value: { $sum: "$amountPaisa" } } }]),
     Transaction.countDocuments({ status: "FAILED", createdAt: { $gte: start } }),
-    PaymentRequest.countDocuments({ state: { $in: ["CREATED", "AWAITING_PALM", "CUSTOMER_IDENTIFIED", "AWAITING_CONFIRMATION", "PROCESSING"] } }),
+    PaymentRequest.countDocuments({ state: { $in: ["CREATED", "AWAITING_PALM", "CUSTOMER_IDENTIFIED", "RISK_CHECK", "AWAITING_CONFIRMATION", "AWAITING_PIN", "PROCESSING"] } }),
     Refund.countDocuments({ status: "REFUNDED", createdAt: { $gte: start } }),
     User.countDocuments({ status: { $in: ["FROZEN", "SUSPENDED"] } }),
     PalmVerification.countDocuments({ matched: false, createdAt: { $gte: start } }),
@@ -63,13 +66,38 @@ router.patch("/merchants/:id/approval", validate(z.object({ status: z.enum(["APP
   res.json({ success: true, data: merchant });
 }));
 
-router.post("/demo-funds", validate(z.object({ userId: z.string().min(12), amount: z.number().positive().max(1_000_000) })), asyncHandler(async (req, res) => {
+router.post("/demo-funds", rateLimit(10, 60_000), validate(z.object({ userId: z.string().min(12), amount: z.number().positive().max(1_000_000) })), asyncHandler(async (req, res) => {
+  const idempotency = await beginIdempotentOperation({
+    idempotencyKey: requireIdempotencyKey(req),
+    userId: req.auth!.userId,
+    endpoint: "POST /api/v1/admin/demo-funds",
+    requestHash: requestHash(req.body),
+  });
+  if (idempotency.kind === "replay") return res.status(idempotency.statusCode).json(idempotency.response);
   const user = await User.findOne({ _id: req.body.userId, role: "CUSTOMER" });
-  if (!user) throw new AppError(404, "CUSTOMER_NOT_FOUND", "Customer not found.");
-  const wallet: any = await Wallet.findOneAndUpdate({ ownerType: "CUSTOMER", ownerId: user._id }, { $inc: { balancePaisa: toPaisa(req.body.amount), version: 1 } }, { new: true });
-  await Notification.create({ userId: user._id, type: "DEMO_CREDIT", title: "Demo funds added", message: `NPR ${req.body.amount.toLocaleString()} was added by an administrator.` });
+  if (!user) {
+    await failIdempotentOperation(idempotency.recordId);
+    throw new AppError(404, "CUSTOMER_NOT_FOUND", "Customer not found.");
+  }
+  const session = await mongoose.startSession();
+  let wallet: any;
+  const response = { success: true, data: { walletId: "", balance: 0 } };
+  try {
+    await session.withTransaction(async () => {
+      wallet = await Wallet.findOneAndUpdate({ ownerType: "CUSTOMER", ownerId: user._id }, { $inc: { balancePaisa: toPaisa(req.body.amount), version: 1 } }, { new: true, session });
+      if (!wallet) throw new AppError(404, "WALLET_NOT_FOUND", "Customer wallet was not found.");
+      await Notification.create([{ userId: user._id, type: "DEMO_CREDIT", title: "Demo funds added", message: `NPR ${req.body.amount.toLocaleString()} was added by an administrator.` }], { session });
+      response.data = { walletId: wallet.walletId, balance: fromPaisa(wallet.balancePaisa) };
+      await completeIdempotentOperation(idempotency.recordId, response, 200, session);
+    });
+  } catch (error) {
+    await failIdempotentOperation(idempotency.recordId);
+    throw error;
+  } finally {
+    await session.endSession();
+  }
   await audit(req, "DEMO_FUNDS_CREDITED", { type: "Wallet", id: wallet.walletId }, { amountPaisa: toPaisa(req.body.amount) });
-  res.json({ success: true, data: { walletId: wallet.walletId, balance: fromPaisa(wallet.balancePaisa) } });
+  res.json(response);
 }));
 
 router.put("/configuration/:key", validate(z.object({ value: z.unknown(), description: z.string().max(300).optional() })), asyncHandler(async (req, res) => {

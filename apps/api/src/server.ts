@@ -7,8 +7,10 @@ import { setSocketServer } from "./lib/realtime.js";
 import { connectRedis, disconnectRedis, isAccessTokenRevoked } from "./lib/redis.js";
 import { verifyAccessToken } from "./lib/auth.js";
 import { Merchant, PaymentRequest } from "./models/index.js";
+import { expireAbandonedPayments } from "./services/payment-maintenance.js";
 
 const server = http.createServer(app);
+let maintenanceTimer: NodeJS.Timeout | undefined;
 const io = new Server(server, { cors: { origin: config.FRONTEND_URL.split(","), credentials: true } });
 setSocketServer(io);
 
@@ -36,6 +38,12 @@ io.on("connection", (socket) => {
 async function start() {
   await mongoose.connect(config.MONGODB_URI, { autoIndex: config.NODE_ENV !== "production" });
   await connectRedis();
+  maintenanceTimer = setInterval(() => {
+    void expireAbandonedPayments().then((count) => {
+      if (count) console.log(JSON.stringify({ level: "info", message: "Expired abandoned payments", count }));
+    }).catch((error) => console.error(JSON.stringify({ level: "error", message: "Payment expiry maintenance failed", error: error instanceof Error ? error.message : "unknown" })));
+  }, config.PAYMENT_CLEANUP_INTERVAL_SECONDS * 1000);
+  maintenanceTimer.unref();
   server.listen(config.PORT, () => {
     console.log(JSON.stringify({ level: "info", message: "Nepal Hand Pay API started", port: config.PORT, environment: config.NODE_ENV }));
   });
@@ -48,6 +56,7 @@ start().catch((error) => {
 
 async function shutdown(signal: string) {
   console.log(JSON.stringify({ level: "info", message: "Shutting down", signal }));
+  if (maintenanceTimer) clearInterval(maintenanceTimer);
   io.close();
   server.close(async () => { await Promise.all([mongoose.disconnect(), disconnectRedis()]); process.exit(0); });
   setTimeout(() => process.exit(1), 10_000).unref();
