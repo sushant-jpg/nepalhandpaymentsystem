@@ -18,6 +18,8 @@ const userSchema = new Schema({
   failedLoginAttempts: { type: Number, default: 0, min: 0 },
   lockUntil: Date,
   paymentPinHash: { type: String, select: false },
+  failedPinAttempts: { type: Number, default: 0, min: 0, select: false },
+  pinLockUntil: { type: Date, select: false },
   twoFactorEnabled: { type: Boolean, default: false },
   securityChangedAt: Date,
   lastLoginAt: Date,
@@ -65,12 +67,15 @@ const transactionSchema = new Schema({
   amountPaisa: { type: Number, required: true, min: 1, validate: Number.isSafeInteger },
   currency: { type: String, enum: ["NPR"], default: "NPR" },
   type: { type: String, enum: ["PAYMENT", "REFUND", "DEMO_CREDIT"], required: true },
-  status: { type: String, enum: ["PENDING", "PALM_VERIFIED", "AWAITING_CONFIRMATION", "SUCCESS", "FAILED", "DECLINED", "CANCELLED", "REFUNDED"], required: true, index: true },
+  status: { type: String, enum: ["PENDING", "PROCESSING", "SUCCESS", "FAILED", "CANCELLED", "EXPIRED", "REFUNDED", "PARTIALLY_REFUNDED"], required: true, index: true },
   paymentMethod: { type: String, enum: ["PALM_WALLET"], default: "PALM_WALLET" },
   palmVerificationId: { type: objectId, ref: "PalmVerification" },
-  riskLevel: { type: String, enum: ["LOW", "MEDIUM", "HIGH", "CRITICAL"], required: true, index: true },
+  riskLevel: { type: String, enum: ["LOW", "MEDIUM", "HIGH", "BLOCKED"], required: true, index: true },
   riskScore: { type: Number, required: true, min: 0, max: 100 },
   description: { type: String, maxlength: 180 },
+  orderReference: { type: String, maxlength: 80 },
+  providerReference: { type: String, maxlength: 120 },
+  providerMode: { type: String, enum: ["MOCK", "SANDBOX", "LIVE"], default: "MOCK" },
   completedAt: Date,
   refundedAmountPaisa: { type: Number, default: 0, min: 0 },
 }, timestamps);
@@ -109,17 +114,27 @@ const paymentRequestSchema = new Schema({
   amountPaisa: { type: Number, required: true, min: 1, validate: Number.isSafeInteger },
   currency: { type: String, enum: ["NPR"], default: "NPR" },
   description: { type: String, maxlength: 180 },
-  state: { type: String, enum: ["CREATED", "PALM_PENDING", "PALM_VERIFIED", "CUSTOMER_CONFIRMATION", "PROCESSING", "SUCCESS", "DECLINED", "EXPIRED", "FAILED", "CANCELLED"], default: "CREATED", index: true },
+  state: { type: String, enum: ["CREATED", "AWAITING_PALM", "CUSTOMER_IDENTIFIED", "AWAITING_CONFIRMATION", "PROCESSING", "SUCCESS", "FAILED", "CANCELLED", "EXPIRED", "REFUNDED", "PARTIALLY_REFUNDED"], default: "CREATED", index: true },
   idempotencyKey: { type: String, required: true },
+  idempotencyRequestHash: { type: String, required: true, select: false },
+  processIdempotencyKey: { type: String, select: false },
+  processRequestHash: { type: String, select: false },
   expiresAt: { type: Date, required: true, index: true },
   palmVerificationId: { type: objectId, ref: "PalmVerification" },
   riskScore: { type: Number, min: 0, max: 100 },
-  riskLevel: { type: String, enum: ["LOW", "MEDIUM", "HIGH", "CRITICAL"] },
+  riskLevel: { type: String, enum: ["LOW", "MEDIUM", "HIGH", "BLOCKED"] },
   requiresPin: { type: Boolean, default: false },
+  requiresOtp: { type: Boolean, default: false },
+  otpVerifiedAt: Date,
   confirmationTokenHash: { type: String, select: false },
   confirmedAt: Date,
+  processingStartedAt: Date,
+  providerReference: String,
+  failureCode: String,
+  orderReference: { type: String, maxlength: 80 },
 }, timestamps);
 paymentRequestSchema.index({ merchantId: 1, idempotencyKey: 1 }, { unique: true });
+paymentRequestSchema.index({ merchantId: 1, processIdempotencyKey: 1 }, { unique: true, sparse: true });
 
 const refundSchema = new Schema({
   refundId: { type: String, required: true, unique: true, index: true },
@@ -127,9 +142,13 @@ const refundSchema = new Schema({
   merchantId: { type: objectId, ref: "Merchant", required: true, index: true },
   amountPaisa: { type: Number, required: true, min: 1 },
   reason: { type: String, required: true, maxlength: 300 },
+  idempotencyKey: { type: String, required: true },
+  idempotencyRequestHash: { type: String, required: true, select: false },
+  providerReference: String,
   status: { type: String, enum: ["REQUESTED", "PROCESSING", "REFUNDED", "REJECTED", "FAILED"], default: "REQUESTED", index: true },
   processedAt: Date,
 }, timestamps);
+refundSchema.index({ merchantId: 1, idempotencyKey: 1 }, { unique: true });
 
 const securityEventSchema = new Schema({
   userId: { type: objectId, ref: "User", index: true },
@@ -147,7 +166,7 @@ const fraudAlertSchema = new Schema({
   userId: { type: objectId, ref: "User", index: true },
   paymentRequestId: { type: objectId, ref: "PaymentRequest", index: true },
   riskScore: { type: Number, required: true, min: 0, max: 100 },
-  riskLevel: { type: String, enum: ["LOW", "MEDIUM", "HIGH", "CRITICAL"], required: true, index: true },
+  riskLevel: { type: String, enum: ["LOW", "MEDIUM", "HIGH", "BLOCKED"], required: true, index: true },
   indicators: [{ type: String }],
   status: { type: String, enum: ["OPEN", "REVIEWED", "RESOLVED", "BLOCKED"], default: "OPEN", index: true },
   reviewedBy: { type: objectId, ref: "User" },
@@ -160,10 +179,17 @@ const auditLogSchema = new Schema({
   action: { type: String, required: true, index: true },
   targetType: String,
   targetId: String,
+  requestId: { type: String, index: true },
   ip: String,
+  userAgent: String,
   metadata: { type: Schema.Types.Mixed, default: {} },
 }, { timestamps: { createdAt: true, updatedAt: false } });
 auditLogSchema.index({ createdAt: -1 });
+for (const operation of ["updateOne", "updateMany", "findOneAndUpdate", "findOneAndDelete", "deleteOne", "deleteMany", "replaceOne"] as const) {
+  auditLogSchema.pre(operation, function () {
+    throw new Error("Audit logs are append-only and cannot be modified.");
+  });
+}
 
 const refreshTokenSchema = new Schema({
   userId: { type: objectId, ref: "User", required: true, index: true },

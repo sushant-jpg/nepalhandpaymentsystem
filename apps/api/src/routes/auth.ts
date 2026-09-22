@@ -6,7 +6,7 @@ import type { Response, Request } from "express";
 import { roles, type Role } from "@nepal-hand-pay/shared-types";
 import { asyncHandler } from "../lib/async-handler.js";
 import { AppError } from "../lib/errors.js";
-import { hashToken, randomToken, signAccessToken, signRefreshToken, verifyRefreshToken } from "../lib/auth.js";
+import { hashToken, randomToken, signAccessToken, signRefreshToken, verifyAccessToken, verifyRefreshToken } from "../lib/auth.js";
 import { audit, securityEvent } from "../lib/audit.js";
 import { config } from "../config.js";
 import { CustomerProfile, Merchant, RefreshToken, User, Wallet } from "../models/index.js";
@@ -14,6 +14,7 @@ import { validate } from "../middleware/validate.js";
 import { authenticate } from "../middleware/auth.js";
 import { rateLimit } from "../middleware/rate-limit.js";
 import { publicId } from "../lib/ids.js";
+import { revokeAccessToken } from "../lib/redis.js";
 
 const router = Router();
 const password = z.string().min(10).max(128).regex(/[A-Z]/, "Must include an uppercase letter").regex(/[a-z]/, "Must include a lowercase letter").regex(/[0-9]/, "Must include a number");
@@ -95,6 +96,7 @@ router.post("/login", rateLimit(8, 15 * 60_000), validate(z.object({ email: z.st
       await user.save();
     }
     await securityEvent(req, { userId: user?._id?.toString(), category: "AUTHENTICATION", action: "LOGIN_FAILED", severity: "WARNING", success: false });
+    await audit(req, "LOGIN_FAILED", user ? { type: "User", id: user._id.toString() } : undefined);
     throw new AppError(401, "INVALID_CREDENTIALS", "Email or password is incorrect.");
   }
   if (user.lockUntil && user.lockUntil > new Date()) throw new AppError(423, "ACCOUNT_LOCKED", "Account is temporarily locked after repeated failed attempts.");
@@ -105,6 +107,7 @@ router.post("/login", rateLimit(8, 15 * 60_000), validate(z.object({ email: z.st
   await user.save();
   req.auth = { userId: user._id.toString(), role: user.role, email: user.email };
   await securityEvent(req, { userId: user._id.toString(), category: "AUTHENTICATION", action: "USER_LOGIN", success: true });
+  await audit(req, "USER_LOGIN", { type: "User", id: user._id.toString() });
   res.json({ success: true, data: await issueSession(req, res, user) });
 }));
 
@@ -125,7 +128,16 @@ router.post("/refresh", rateLimit(30, 60_000), asyncHandler(async (req, res) => 
 router.post("/logout", asyncHandler(async (req, res) => {
   const token = req.cookies?.nhp_refresh as string | undefined;
   if (token) await RefreshToken.updateOne({ tokenHash: hashToken(token) }, { $set: { revokedAt: new Date() } });
+  const accessToken = req.header("authorization")?.startsWith("Bearer ") ? req.header("authorization")!.slice(7) : undefined;
+  if (accessToken) {
+    try {
+      const payload = verifyAccessToken(accessToken);
+      req.auth = { userId: payload.sub, role: payload.role, email: payload.email, tokenJti: payload.jti, tokenExpiresAt: payload.exp };
+      if (payload.jti) await revokeAccessToken(payload.jti, Math.max(1, (payload.exp ?? Math.floor(Date.now() / 1000) + 60) - Math.floor(Date.now() / 1000)));
+    } catch { /* an invalid access token does not prevent refresh-token logout */ }
+  }
   res.clearCookie("nhp_refresh", { path: "/api/v1/auth" });
+  await audit(req, "USER_LOGOUT");
   res.json({ success: true, data: { message: "Signed out." } });
 }));
 
@@ -160,6 +172,8 @@ router.post("/reset-password", rateLimit(5, 60_000), validate(z.object({ token: 
   user.securityChangedAt = new Date();
   await user.save();
   await RefreshToken.updateMany({ userId: user._id, revokedAt: { $exists: false } }, { $set: { revokedAt: new Date() } });
+  req.auth = { userId: user._id.toString(), role: user.role, email: user.email };
+  await audit(req, "PASSWORD_RESET", { type: "User", id: user._id.toString() });
   res.json({ success: true, data: { message: "Password reset successfully." } });
 }));
 

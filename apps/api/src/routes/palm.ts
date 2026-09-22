@@ -11,7 +11,7 @@ import { audit, securityEvent } from "../lib/audit.js";
 const router = Router();
 router.use(authenticate, authorize("CUSTOMER"));
 
-const image = z.string().startsWith("data:image/").max(5_000_000);
+const image = z.string().regex(/^data:image\/(jpeg|png|webp);base64,/).max(1_500_000);
 router.post("/enroll", validate(z.object({ handSide: z.enum(["LEFT", "RIGHT"]), consent: z.literal(true), samples: z.array(image).min(3).max(5) })), asyncHandler(async (req, res) => {
   const result = await palmClient.enroll(req.auth!.userId, req.body.handSide, req.body.samples);
   const enrollment = await PalmEnrollment.findOneAndUpdate(

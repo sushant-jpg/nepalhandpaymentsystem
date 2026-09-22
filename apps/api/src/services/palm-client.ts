@@ -8,7 +8,7 @@ const palm = axios.create({
   headers: { "x-service-key": config.PALM_SERVICE_KEY },
 });
 
-export interface PalmMatch { success: boolean; matched: boolean; userId?: string; similarity?: number; threshold: number; algorithmVersion: string; templateRef?: string }
+export interface PalmMatch { success: boolean; matched: boolean; userId?: string; similarity?: number; threshold: number; algorithmVersion: string; templateRef?: string; qualityScore?: number; livenessAssessment?: string }
 
 async function call<T>(method: "get" | "post" | "delete", path: string, data?: unknown): Promise<T> {
   try {
@@ -17,6 +17,9 @@ async function call<T>(method: "get" | "post" | "delete", path: string, data?: u
   } catch (error) {
     if (axios.isAxiosError(error) && error.response?.status === 422) {
       throw new AppError(422, "PALM_IMAGE_INVALID", "A clear palm could not be extracted from the image.");
+    }
+    if (axios.isAxiosError(error) && error.response?.status === 409) {
+      throw new AppError(409, "DUPLICATE_PALM", "This palm appears to be enrolled to another account.");
     }
     throw new AppError(503, "PALM_SERVICE_UNAVAILABLE", "Palm recognition service is temporarily unavailable.");
   }

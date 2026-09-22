@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/palm-recognition/requirements.txt
+      - run: npm ci
+      - run: python -m pip install -r services/palm-recognition/requirements.txt
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: python -m pytest services/palm-recognition/tests
+      - name: Validate Docker Compose
+        env:
+          JWT_ACCESS_SECRET: ci-access-secret-with-at-least-32-characters
+          JWT_REFRESH_SECRET: ci-refresh-secret-with-at-least-32-characters
+          PALM_SERVICE_KEY: ci-palm-service-key-with-at-least-32-characters
+          PALM_TEMPLATE_ENCRYPTION_KEY: nJ7StPpwWJgYr6B-gsFGHxKFyuw1PyomSnQlHDEMLqA=
+        run: docker compose config --quiet

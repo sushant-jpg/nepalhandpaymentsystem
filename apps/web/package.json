@@ -4,11 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
+    "dev": "vite --configLoader runner",
+    "build": "tsc -b && vite build --configLoader runner",
     "typecheck": "tsc -b --pretty false",
     "lint": "tsc -b --pretty false",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests --configLoader runner"
   },
   "dependencies": {
     "@nepal-hand-pay/shared-types": "*",

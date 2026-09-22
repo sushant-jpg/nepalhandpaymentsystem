@@ -11,6 +11,7 @@
     "lint": "npm run build -w @nepal-hand-pay/shared-types && npm run lint -w @nepal-hand-pay/api && npm run lint -w @nepal-hand-pay/web",
     "test": "npm run build -w @nepal-hand-pay/shared-types && npm run test -w @nepal-hand-pay/api && npm run test -w @nepal-hand-pay/web",
     "test:palm": "python -m pytest services/palm-recognition/tests",
+    "test:all": "npm test && npm run test:palm",
     "seed": "npm run seed -w @nepal-hand-pay/api",
     "format": "prettier --write ."
   },

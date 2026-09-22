@@ -22,7 +22,7 @@ app.disable("x-powered-by");
 app.set("trust proxy", 1);
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 app.use(cors({ origin: config.FRONTEND_URL.split(",").map((x) => x.trim()), credentials: true, allowedHeaders: ["Content-Type", "Authorization", "Idempotency-Key"] }));
-app.use(express.json({ limit: "6mb" }));
+app.use(express.json({ limit: "8mb" }));
 app.use(cookieParser());
 app.use(pinoHttp({
   genReqId: (req, res) => {
@@ -46,6 +46,7 @@ v1.use("/admin", adminRoutes);
 v1.use("/security", securityRoutes);
 v1.use("/analytics", analyticsRoutes);
 app.use("/api/v1", v1);
+app.use("/health", healthRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

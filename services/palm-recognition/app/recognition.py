@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
+import os
 from dataclasses import dataclass
 
 import cv2
@@ -16,12 +18,16 @@ class PalmImageError(ValueError):
 class ExtractedFeature:
     vector: np.ndarray
     quality: float
+    image_digest: str
+    liveness_assessment: str
 
 
 def decode_data_url(value: str) -> np.ndarray:
     try:
         encoded = value.split(",", 1)[1] if "," in value else value
         raw = base64.b64decode(encoded, validate=True)
+        if len(raw) > 1_100_000:
+            raise PalmImageError("Image exceeds the decoded size limit")
         image = cv2.imdecode(np.frombuffer(raw, dtype=np.uint8), cv2.IMREAD_COLOR)
     except (ValueError, binascii.Error) as exc:
         raise PalmImageError("Image is not valid base64 data") from exc
@@ -64,9 +70,15 @@ def extract_feature(data_url: str) -> ExtractedFeature:
     gray = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(gray)
     sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
     contrast = float(gray.std())
+    brightness = float(gray.mean())
     quality = min(1.0, (sharpness / 180.0) * 0.65 + (contrast / 55.0) * 0.35)
-    if contrast < 6:
+    if contrast < 8:
         raise PalmImageError("Palm image has insufficient contrast")
+    if brightness < 25 or brightness > 235:
+        raise PalmImageError("Palm image is underexposed or overexposed")
+    minimum_quality = float(os.getenv("PALM_MIN_QUALITY", "0.18"))
+    if quality < minimum_quality:
+        raise PalmImageError("Palm image is too blurred for reliable matching")
 
     normalized = gray.astype(np.float32) / 255.0
     dct = cv2.dct(normalized)[:20, :20].flatten()
@@ -82,12 +94,24 @@ def extract_feature(data_url: str) -> ExtractedFeature:
     norm = float(np.linalg.norm(vector))
     if norm == 0:
         raise PalmImageError("Palm features could not be extracted")
-    return ExtractedFeature(vector=vector / norm, quality=quality)
+    # A normal RGB frame cannot prove liveness. This passive result only rejects
+    # obviously unusable frames and must never be presented as certified liveness.
+    return ExtractedFeature(
+        vector=vector / norm,
+        quality=quality,
+        image_digest=hashlib.sha256(image.tobytes()).hexdigest(),
+        liveness_assessment="PASSIVE_RGB_CHECK_ONLY",
+    )
 
 
 def aggregate_samples(samples: list[str]) -> tuple[np.ndarray, float]:
     extracted = [extract_feature(sample) for sample in samples]
+    if len({item.image_digest for item in extracted}) < 2:
+        raise PalmImageError("Enrollment samples must be separate live captures")
     vectors = np.vstack([item.vector for item in extracted])
+    pair_scores = [similarity(vectors[left], vectors[right]) for left in range(len(vectors)) for right in range(left + 1, len(vectors))]
+    if pair_scores and float(np.median(pair_scores)) < 0.78:
+        raise PalmImageError("Enrollment samples are not consistent enough")
     aggregate = np.median(vectors, axis=0).astype(np.float32)
     aggregate /= max(float(np.linalg.norm(aggregate)), 1e-8)
     return aggregate, float(np.mean([item.quality for item in extracted]))

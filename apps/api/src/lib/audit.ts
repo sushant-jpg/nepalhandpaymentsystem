@@ -13,7 +13,9 @@ export async function audit(
     action,
     targetType: target?.type,
     targetId: target?.id,
+    requestId: req.requestId,
     ip: req.ip,
+    userAgent: req.header("user-agent"),
     metadata,
   });
 }

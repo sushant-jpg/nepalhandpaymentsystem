@@ -8,8 +8,10 @@ import { AppError } from "../lib/errors.js";
 import { audit } from "../lib/audit.js";
 import { fromPaisa, toPaisa } from "../lib/money.js";
 import { publicId } from "../lib/ids.js";
-import { Merchant, Notification, Refund, Transaction } from "../models/index.js";
+import { Merchant, Notification, PaymentRequest, Refund, Transaction } from "../models/index.js";
 import { paymentProvider } from "../services/payment-provider.js";
+import { assertIdempotentReplay, requestHash, requireIdempotencyKey } from "../lib/idempotency.js";
+import { withDistributedLock } from "../lib/redis.js";
 
 const router = Router();
 router.use(authenticate, authorize("MERCHANT"));
@@ -43,24 +45,61 @@ router.patch("/profile", validate(z.object({ businessName: z.string().trim().min
 
 router.post("/refunds", validate(z.object({ transactionId: z.string().min(10), amount: z.number().positive(), reason: z.string().trim().min(4).max(300) })), asyncHandler(async (req, res) => {
   const merchant = await ownMerchant(req.auth!.userId);
+  const idempotencyKey = requireIdempotencyKey(req);
+  const bodyHash = requestHash(req.body);
+  const existing: any = await Refund.findOne({ merchantId: merchant._id, idempotencyKey }).select("+idempotencyRequestHash").lean();
+  if (existing) {
+    assertIdempotentReplay(existing.idempotencyRequestHash, bodyHash);
+    return res.json({ success: true, data: { refundId: existing.refundId, status: existing.status, amount: fromPaisa(existing.amountPaisa), replayed: true } });
+  }
   const transaction: any = await Transaction.findOne({ transactionId: req.body.transactionId, merchantId: merchant._id });
-  if (!transaction || !["SUCCESS", "REFUNDED"].includes(transaction.status)) throw new AppError(409, "NOT_REFUNDABLE", "Transaction is not refundable.");
+  if (!transaction || !["SUCCESS", "PARTIALLY_REFUNDED"].includes(transaction.status)) throw new AppError(409, "NOT_REFUNDABLE", "Transaction is not refundable.");
   const amountPaisa = toPaisa(req.body.amount);
   if (transaction.refundedAmountPaisa + amountPaisa > transaction.amountPaisa) throw new AppError(400, "INVALID_REFUND_AMOUNT", "Refund exceeds the remaining refundable amount.");
-  const refund: any = await Refund.create({ refundId: publicId("RFND"), transactionId: transaction._id, merchantId: merchant._id, amountPaisa, reason: req.body.reason, status: "PROCESSING" });
-  const session = await mongoose.startSession();
+  let refund: any;
   try {
-    await session.withTransaction(async () => {
-      await paymentProvider.refund(transaction.customerId.toString(), merchant._id.toString(), amountPaisa, session);
-      transaction.refundedAmountPaisa += amountPaisa;
-      if (transaction.refundedAmountPaisa === transaction.amountPaisa) transaction.status = "REFUNDED";
-      await transaction.save({ session });
-      refund.status = "REFUNDED"; refund.processedAt = new Date(); await refund.save({ session });
-      await Notification.create([{ userId: transaction.customerId, type: "REFUND_COMPLETED", title: "Refund completed", message: `NPR ${fromPaisa(amountPaisa).toLocaleString()} was returned to your demo wallet.`, metadata: { transactionId: transaction.transactionId } }], { session });
+    refund = await Refund.create({ refundId: publicId("RFND"), transactionId: transaction._id, merchantId: merchant._id, amountPaisa, reason: req.body.reason, idempotencyKey, idempotencyRequestHash: bodyHash, status: "PROCESSING" });
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === 11000) {
+      const raced: any = await Refund.findOne({ merchantId: merchant._id, idempotencyKey }).select("+idempotencyRequestHash").lean();
+      if (raced) {
+        assertIdempotentReplay(raced.idempotencyRequestHash, bodyHash);
+        return res.json({ success: true, data: { refundId: raced.refundId, status: raced.status, amount: fromPaisa(raced.amountPaisa), replayed: true } });
+      }
+    }
+    throw error;
+  }
+  try {
+    await withDistributedLock(`refund:${transaction.transactionId}`, 30_000, async () => {
+      const session = await mongoose.startSession();
+      try {
+        await session.withTransaction(async () => {
+          const current: any = await Transaction.findById(transaction._id).session(session);
+          if (!current || !["SUCCESS", "PARTIALLY_REFUNDED"].includes(current.status)) throw new AppError(409, "NOT_REFUNDABLE", "Transaction is not refundable.");
+          if (current.refundedAmountPaisa + amountPaisa > current.amountPaisa) throw new AppError(400, "INVALID_REFUND_AMOUNT", "Refund exceeds the remaining refundable amount.");
+          const provider = await paymentProvider.refundPayment(current.customerId.toString(), merchant._id.toString(), amountPaisa, session);
+          const nextRefunded = current.refundedAmountPaisa + amountPaisa;
+          const nextStatus = nextRefunded === current.amountPaisa ? "REFUNDED" : "PARTIALLY_REFUNDED";
+          const changed = await Transaction.updateOne(
+            { _id: current._id, refundedAmountPaisa: current.refundedAmountPaisa, status: current.status },
+            { $inc: { refundedAmountPaisa: amountPaisa }, $set: { status: nextStatus } },
+            { session },
+          );
+          if (changed.modifiedCount !== 1) throw new AppError(409, "REFUND_RACE", "Another refund changed this transaction. Retry safely with the same key.");
+          await Refund.updateOne({ _id: refund._id, status: "PROCESSING" }, { $set: { status: "REFUNDED", processedAt: new Date(), providerReference: provider.providerReference } }, { session });
+          await PaymentRequest.updateOne({ _id: current.paymentRequestId }, { $set: { state: nextStatus } }, { session });
+          await Notification.create([{ userId: current.customerId, type: "REFUND_COMPLETED", title: "Refund completed", message: `NPR ${fromPaisa(amountPaisa).toLocaleString()} was returned to your demo wallet.`, metadata: { transactionId: current.transactionId } }], { session });
+        });
+      } finally {
+        await session.endSession();
+      }
     });
-  } catch (error) { refund.status = "FAILED"; await refund.save(); throw error; } finally { await session.endSession(); }
-  await audit(req, "REFUND_REQUESTED", { type: "Refund", id: refund.refundId }, { amountPaisa });
-  res.status(201).json({ success: true, data: { refundId: refund.refundId, status: refund.status, amount: fromPaisa(amountPaisa) } });
+  } catch (error) {
+    await Refund.updateOne({ _id: refund._id, status: "PROCESSING" }, { $set: { status: "FAILED" } });
+    throw error;
+  }
+  await audit(req, "REFUND_COMPLETED", { type: "Refund", id: refund.refundId }, { amountPaisa, providerMode: "MOCK" });
+  res.status(201).json({ success: true, data: { refundId: refund.refundId, status: "REFUNDED", amount: fromPaisa(amountPaisa), providerMode: "MOCK" } });
 }));
 
 export default router;

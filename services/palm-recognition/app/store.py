@@ -15,6 +15,8 @@ class TemplateStore:
     def __init__(self, path: str, encryption_key: str):
         self.path = path
         Path(path).parent.mkdir(parents=True, exist_ok=True)
+        if os.getenv("PALM_ENVIRONMENT", "development") == "production" and not encryption_key:
+            raise RuntimeError("PALM_TEMPLATE_ENCRYPTION_KEY is required in production")
         key = encryption_key.encode() if encryption_key else base64.urlsafe_b64encode(hashlib.sha256(os.getenv("PALM_SERVICE_KEY", "local-service-key-change-me").encode()).digest())
         self.cipher = Fernet(key)
         self._initialize()

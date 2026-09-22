@@ -3,31 +3,32 @@ export type Role = (typeof roles)[number];
 
 export const transactionStatuses = [
   "PENDING",
-  "PALM_VERIFIED",
-  "AWAITING_CONFIRMATION",
+  "PROCESSING",
   "SUCCESS",
   "FAILED",
-  "DECLINED",
   "CANCELLED",
+  "EXPIRED",
   "REFUNDED",
+  "PARTIALLY_REFUNDED",
 ] as const;
 export type TransactionStatus = (typeof transactionStatuses)[number];
 
 export const paymentStates = [
   "CREATED",
-  "PALM_PENDING",
-  "PALM_VERIFIED",
-  "CUSTOMER_CONFIRMATION",
+  "AWAITING_PALM",
+  "CUSTOMER_IDENTIFIED",
+  "AWAITING_CONFIRMATION",
   "PROCESSING",
   "SUCCESS",
-  "DECLINED",
-  "EXPIRED",
   "FAILED",
   "CANCELLED",
+  "EXPIRED",
+  "REFUNDED",
+  "PARTIALLY_REFUNDED",
 ] as const;
 export type PaymentState = (typeof paymentStates)[number];
 
-export type RiskLevel = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+export type RiskLevel = "LOW" | "MEDIUM" | "HIGH" | "BLOCKED";
 
 export interface SessionUser {
   id: string;

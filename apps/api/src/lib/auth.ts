@@ -3,11 +3,11 @@ import jwt, { type SignOptions } from "jsonwebtoken";
 import type { Role } from "@nepal-hand-pay/shared-types";
 import { config } from "../config.js";
 
-export interface TokenPayload { sub: string; role: Role; email: string; type: "access" | "refresh"; jti?: string }
+export interface TokenPayload { sub: string; role: Role; email: string; type: "access" | "refresh"; jti: string; exp?: number }
 
 export function signAccessToken(user: { id: string; role: Role; email: string }) {
   return jwt.sign(
-    { role: user.role, email: user.email, type: "access" },
+    { role: user.role, email: user.email, type: "access", jti: crypto.randomUUID() },
     config.JWT_ACCESS_SECRET,
     { subject: user.id, expiresIn: config.JWT_ACCESS_TTL } as SignOptions,
   );

@@ -6,24 +6,28 @@ import { validate } from "../middleware/validate.js";
 import { AppError } from "../lib/errors.js";
 import { audit } from "../lib/audit.js";
 import { fromPaisa, toPaisa } from "../lib/money.js";
-import { FraudAlert, Merchant, Notification, PalmVerification, SecurityEvent, SystemConfig, Transaction, User, Wallet } from "../models/index.js";
+import { FraudAlert, Merchant, Notification, PalmEnrollment, PalmVerification, PaymentRequest, Refund, SecurityEvent, SystemConfig, Transaction, User, Wallet } from "../models/index.js";
 
 const router = Router();
 router.use(authenticate, authorize("ADMIN"));
 
 router.get("/dashboard", asyncHandler(async (_req, res) => {
   const start = new Date(); start.setHours(0, 0, 0, 0);
-  const [totalUsers, activeCustomers, merchants, paymentsToday, volume, failed, failedPalms, suspicious, daily, risk] = await Promise.all([
+  const [totalUsers, activeCustomers, merchants, activeEnrollments, paymentsToday, volume, failed, pending, refunds, blockedAccounts, failedPalms, suspicious, daily, risk] = await Promise.all([
     User.countDocuments(), User.countDocuments({ role: "CUSTOMER", status: "ACTIVE" }), Merchant.countDocuments(),
+    PalmEnrollment.countDocuments({ status: "ACTIVE" }),
     Transaction.countDocuments({ status: "SUCCESS", createdAt: { $gte: start } }),
     Transaction.aggregate([{ $match: { status: "SUCCESS", createdAt: { $gte: start } } }, { $group: { _id: null, value: { $sum: "$amountPaisa" } } }]),
     Transaction.countDocuments({ status: "FAILED", createdAt: { $gte: start } }),
+    PaymentRequest.countDocuments({ state: { $in: ["CREATED", "AWAITING_PALM", "CUSTOMER_IDENTIFIED", "AWAITING_CONFIRMATION", "PROCESSING"] } }),
+    Refund.countDocuments({ status: "REFUNDED", createdAt: { $gte: start } }),
+    User.countDocuments({ status: { $in: ["FROZEN", "SUSPENDED"] } }),
     PalmVerification.countDocuments({ matched: false, createdAt: { $gte: start } }),
     FraudAlert.countDocuments({ status: "OPEN" }),
     Transaction.aggregate([{ $match: { status: "SUCCESS", createdAt: { $gte: new Date(Date.now() - 14 * 86_400_000) } } }, { $group: { _id: { $dateToString: { format: "%m/%d", date: "$createdAt", timezone: "Asia/Kathmandu" } }, value: { $sum: "$amountPaisa" }, count: { $sum: 1 } } }, { $sort: { _id: 1 } }]),
     Transaction.aggregate([{ $group: { _id: "$riskLevel", value: { $sum: 1 } } }]),
   ]);
-  res.json({ success: true, data: { metrics: { totalUsers, activeCustomers, merchants, paymentsToday, transactionVolume: fromPaisa(volume[0]?.value ?? 0), failedTransactions: failed, failedPalmScans: failedPalms, suspiciousTransactions: suspicious }, daily: daily.map((x) => ({ label: x._id, value: fromPaisa(x.value), count: x.count })), risk: risk.map((x) => ({ name: x._id, value: x.value })) } });
+  res.json({ success: true, data: { metrics: { totalUsers, activeCustomers, merchants, activeEnrollments, paymentsToday, transactionVolume: fromPaisa(volume[0]?.value ?? 0), failedTransactions: failed, pendingPayments: pending, refundsToday: refunds, blockedAccounts, failedPalmScans: failedPalms, suspiciousTransactions: suspicious }, daily: daily.map((x) => ({ label: x._id, value: fromPaisa(x.value), count: x.count })), risk: risk.map((x) => ({ name: x._id, value: x.value })) } });
 }));
 
 router.get("/users", asyncHandler(async (req, res) => {
@@ -36,7 +40,12 @@ router.get("/users", asyncHandler(async (req, res) => {
 router.patch("/users/:id/status", validate(z.object({ status: z.enum(["ACTIVE", "FROZEN", "SUSPENDED"]) })), asyncHandler(async (req, res) => {
   const user = await User.findByIdAndUpdate(req.params.id, { $set: { status: req.body.status } }, { new: true });
   if (!user) throw new AppError(404, "USER_NOT_FOUND", "User not found.");
-  await Wallet.updateOne({ ownerType: user.role, ownerId: user.role === "CUSTOMER" ? user._id : { $exists: false } }, { $set: { status: req.body.status === "ACTIVE" ? "ACTIVE" : "FROZEN" } });
+  let walletOwnerId = user._id;
+  if (user.role === "MERCHANT") {
+    const merchantProfile: any = await Merchant.findOne({ userId: user._id }).select("_id").lean();
+    walletOwnerId = merchantProfile?._id ?? user._id;
+  }
+  if (["CUSTOMER", "MERCHANT"].includes(user.role)) await Wallet.updateOne({ ownerType: user.role, ownerId: walletOwnerId }, { $set: { status: req.body.status === "ACTIVE" ? "ACTIVE" : "FROZEN" } });
   await audit(req, "ADMIN_ACTION", { type: "User", id: user._id.toString() }, { action: "STATUS_CHANGE", status: req.body.status });
   res.json({ success: true, data: { id: user._id, status: user.status } });
 }));

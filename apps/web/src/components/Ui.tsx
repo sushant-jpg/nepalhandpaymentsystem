@@ -17,7 +17,7 @@ export function Empty({ title, detail }: { title: string; detail: string }) {
 
 export function Status({ value }: { value: string }) {
   const good = ["SUCCESS", "ACTIVE", "APPROVED", "LOW", "REFUNDED"].includes(value);
-  const bad = ["FAILED", "DECLINED", "SUSPENDED", "CRITICAL", "FROZEN", "REJECTED"].includes(value);
+  const bad = ["FAILED", "SUSPENDED", "BLOCKED", "FROZEN", "REJECTED"].includes(value);
   return <span className={`status ${good ? "bg-emerald-100 text-emerald-800" : bad ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-800"}`}>{value.replaceAll("_", " ")}</span>;
 }
 

@@ -1,7 +1,8 @@
 import type { RiskLevel } from "@nepal-hand-pay/shared-types";
 import { PaymentRequest, SecurityEvent, SystemConfig, Transaction, User } from "../models/index.js";
+import { config } from "../config.js";
 
-export interface RiskResult { score: number; level: RiskLevel; indicators: string[]; requiresPin: boolean }
+export interface RiskResult { score: number; level: RiskLevel; indicators: string[]; requiresPin: boolean; requiresOtp: boolean }
 
 export async function assessPaymentRisk(customerId: string, amountPaisa: number, merchantCreatedAt?: Date): Promise<RiskResult> {
   let score = 0;
@@ -12,7 +13,7 @@ export async function assessPaymentRisk(customerId: string, amountPaisa: number,
     SystemConfig.findOne({ key: "riskThresholds" }).lean(),
   ]);
   const highValuePinThreshold = typeof pinConfig?.value === "number" ? pinConfig.value : 20_000;
-  const levels = { medium: 30, high: 60, critical: 80, ...(levelConfig?.value ?? {}) };
+  const levels = { medium: config.RISK_MEDIUM_THRESHOLD, high: config.RISK_HIGH_THRESHOLD, blocked: config.RISK_BLOCKED_THRESHOLD, ...(levelConfig?.value ?? {}) };
   if (amount >= highValuePinThreshold) { score += 35; indicators.push("VERY_HIGH_AMOUNT"); }
   else if (amount >= 5_000) { score += 18; indicators.push("HIGH_AMOUNT"); }
 
@@ -35,6 +36,12 @@ export async function assessPaymentRisk(customerId: string, amountPaisa: number,
   if (recentRequests >= 2) { score += 12; indicators.push("PAYMENT_VELOCITY"); }
 
   score = Math.min(100, score);
-  const level: RiskLevel = score >= levels.critical ? "CRITICAL" : score >= levels.high ? "HIGH" : score >= levels.medium ? "MEDIUM" : "LOW";
-  return { score, level, indicators, requiresPin: amount >= highValuePinThreshold || level === "HIGH" || level === "MEDIUM" };
+  const level: RiskLevel = score >= levels.blocked ? "BLOCKED" : score >= levels.high ? "HIGH" : score >= levels.medium ? "MEDIUM" : "LOW";
+  return {
+    score,
+    level,
+    indicators,
+    requiresPin: amount >= highValuePinThreshold || level === "HIGH" || level === "MEDIUM",
+    requiresOtp: level === "HIGH",
+  };
 }
