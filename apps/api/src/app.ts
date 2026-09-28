@@ -16,17 +16,29 @@ import adminRoutes from "./routes/admin.js";
 import securityRoutes from "./routes/security.js";
 import analyticsRoutes from "./routes/analytics.js";
 import healthRoutes from "./routes/health.js";
+import ledgerRoutes from "./routes/ledger.js";
+import {
+  isTrustedBrowserOrigin,
+  requireTrustedBrowserOrigin,
+} from "./middleware/trusted-origin.js";
 
 export const app = express();
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
-app.use(cors({ origin: config.FRONTEND_URL.split(",").map((x) => x.trim()), credentials: true, allowedHeaders: ["Content-Type", "Authorization", "Idempotency-Key"] }));
-app.use(express.json({ limit: "8mb" }));
+app.use(cors({
+  origin: (origin, callback) =>
+    callback(null, !origin || isTrustedBrowserOrigin(origin)),
+  credentials: true,
+  allowedHeaders: ["Content-Type", "Authorization", "Idempotency-Key"],
+}));
+app.use(requireTrustedBrowserOrigin);
+app.use(express.json({ limit: config.API_BODY_LIMIT }));
 app.use(cookieParser());
 app.use(pinoHttp({
   genReqId: (req, res) => {
-    const id = req.headers["x-request-id"]?.toString() ?? nanoid();
+    const supplied = req.headers["x-request-id"]?.toString();
+    const id = supplied && /^[A-Za-z0-9._:-]{8,128}$/.test(supplied) ? supplied : nanoid();
     res.setHeader("x-request-id", id);
     return id;
   },
@@ -45,6 +57,7 @@ v1.use("/merchants", merchantRoutes);
 v1.use("/admin", adminRoutes);
 v1.use("/security", securityRoutes);
 v1.use("/analytics", analyticsRoutes);
+v1.use("/ledger", ledgerRoutes);
 app.use("/api/v1", v1);
 app.use("/health", healthRoutes);
 

@@ -10,9 +10,9 @@ const palm = axios.create({
 
 export interface PalmMatch { success: boolean; matched: boolean; userId?: string; similarity?: number; threshold: number; algorithmVersion: string; templateRef?: string; qualityScore?: number; livenessAssessment?: string }
 
-async function call<T>(method: "get" | "post" | "delete", path: string, data?: unknown): Promise<T> {
+async function call<T>(method: "get" | "post" | "delete", path: string, data?: unknown, timeout?: number): Promise<T> {
   try {
-    const response = await palm.request<T>({ method, url: path, data });
+    const response = await palm.request<T>({ method, url: path, data, timeout });
     return response.data;
   } catch (error) {
     if (axios.isAxiosError(error) && error.response?.status === 422) {
@@ -26,7 +26,7 @@ async function call<T>(method: "get" | "post" | "delete", path: string, data?: u
 }
 
 export const palmClient = {
-  health: () => call<{ status: string }>("get", "/health"),
+  health: () => call<{ status: string }>("get", "/health", undefined, 2_500),
   enroll: (userId: string, handSide: string, samples: string[]) => call<PalmMatch>("post", "/palm/enroll", { userId, handSide, samples }),
   identify: (image: string) => call<PalmMatch>("post", "/palm/identify", { image }),
   verify: (userId: string, image: string) => call<PalmMatch>("post", "/palm/verify", { userId, image }),

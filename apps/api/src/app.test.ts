@@ -28,5 +28,45 @@ describe("API envelope and route protection", () => {
     const response = await request(app).post("/api/v1/auth/register").send({ email: "not-an-email", password: "weak" });
     expect(response.status).toBe(400);
     expect(response.body.error.code).toBe("VALIDATION_ERROR");
+    expect(response.body.error.details.fieldErrors).toMatchObject({
+      email: ["Enter a valid email address"],
+      displayName: expect.any(Array),
+      password: expect.any(Array),
+    });
+  });
+  it("classifies malformed JSON without exposing parser details", async () => {
+    const response = await request(app)
+      .post("/api/v1/auth/login")
+      .set("Content-Type", "application/json")
+      .send('{"email":');
+    expect(response.status).toBe(400);
+    expect(response.body.error).toEqual({
+      code: "MALFORMED_JSON",
+      message: "The request body is not valid JSON.",
+    });
+  });
+  it("rejects cross-site browser mutations", async () => {
+    const response = await request(app)
+      .post("/api/v1/auth/logout")
+      .set("Origin", "https://attacker.example")
+      .set("Sec-Fetch-Site", "cross-site");
+    expect(response.status).toBe(403);
+    expect(response.body.error.code).toBe("UNTRUSTED_ORIGIN");
+  });
+  it("accepts a loopback Vite origin on a fallback development port", async () => {
+    const response = await request(app)
+      .post("/api/v1/auth/register")
+      .set("Origin", "http://localhost:5174")
+      .set("Sec-Fetch-Site", "same-origin")
+      .send({ email: "not-an-email", password: "weak" });
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe("VALIDATION_ERROR");
+  });
+  it("replaces unsafe caller-supplied correlation IDs", async () => {
+    const response = await request(app)
+      .get("/api/v1/not-a-route")
+      .set("X-Request-Id", "contains spaces and control-like text");
+    expect(response.headers["x-request-id"]).toEqual(expect.any(String));
+    expect(response.headers["x-request-id"]).not.toContain(" ");
   });
 });

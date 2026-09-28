@@ -1,4 +1,5 @@
 node_modules/
+.test-tmp/
 dist/
 coverage/
 *.tsbuildinfo
@@ -7,10 +8,13 @@ coverage/
 *.log
 .DS_Store
 .vite/
+.local/
 __pycache__/
 .pytest_cache/
 .venv/
 *.pyc
 services/palm-recognition/data/*.db
 services/palm-recognition/data/*.json
+services/palm-recognition/data/*.db-wal
+services/palm-recognition/data/*.db-shm
 !services/palm-recognition/data/.gitkeep

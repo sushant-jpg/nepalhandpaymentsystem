@@ -45,29 +45,49 @@ export async function beginIdempotentOperation(input: {
   const readExisting = async () => {
     const existing = await IdempotencyRecord.findOne(filter).select("+requestHash").lean();
     if (!existing) return null;
+    if (existing.expiresAt <= new Date()) {
+      await IdempotencyRecord.deleteOne({
+        _id: existing._id,
+        status: existing.status,
+        expiresAt: existing.expiresAt,
+      });
+      return null;
+    }
     assertIdempotentReplay(existing.requestHash, input.requestHash);
+    if (existing.status === "FAILED") {
+      await IdempotencyRecord.deleteOne({
+        _id: existing._id,
+        status: "FAILED",
+        expiresAt: existing.expiresAt,
+      });
+      return null;
+    }
     if (existing.status === "COMPLETED" && existing.statusCode && existing.response) {
       return { kind: "replay", response: existing.response, statusCode: existing.statusCode } as const;
     }
     throw new AppError(409, "OPERATION_IN_PROGRESS", "This idempotent operation is already being processed.");
   };
 
-  const replay = await readExisting();
-  if (replay) return replay;
-  try {
-    const record = await IdempotencyRecord.create({
-      ...filter,
-      requestHash: input.requestHash,
-      expiresAt: new Date(Date.now() + (input.ttlSeconds ?? 86_400) * 1000),
-    });
-    return { kind: "execute", recordId: record._id.toString() };
-  } catch (error) {
-    if (typeof error === "object" && error !== null && "code" in error && error.code === 11000) {
-      const raced = await readExisting();
-      if (raced) return raced;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const replay = await readExisting();
+    if (replay) return replay;
+    try {
+      const record = await IdempotencyRecord.create({
+        ...filter,
+        requestHash: input.requestHash,
+        expiresAt: new Date(Date.now() + (input.ttlSeconds ?? 86_400) * 1000),
+      });
+      return { kind: "execute", recordId: record._id.toString() };
+    } catch (error) {
+      if (typeof error === "object" && error !== null && "code" in error && error.code === 11000) {
+        const raced = await readExisting();
+        if (raced) return raced;
+        if (attempt === 0) continue;
+      }
+      throw error;
     }
-    throw error;
   }
+  throw new AppError(409, "OPERATION_IN_PROGRESS", "This idempotent operation is already being processed.");
 }
 
 export async function completeIdempotentOperation(recordId: string, response: unknown, statusCode: number, session?: ClientSession): Promise<void> {

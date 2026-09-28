@@ -33,6 +33,8 @@ def decode_data_url(value: str) -> np.ndarray:
         raise PalmImageError("Image is not valid base64 data") from exc
     if image is None or image.shape[0] < 100 or image.shape[1] < 100:
         raise PalmImageError("Image is too small or unreadable")
+    if image.shape[0] * image.shape[1] > 4_000_000:
+        raise PalmImageError("Image dimensions exceed the processing limit")
     return image
 
 

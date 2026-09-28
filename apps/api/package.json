@@ -4,13 +4,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
+    "dev": "node ../../scripts/tsx.mjs watch src/server.ts",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src --max-warnings=0",
     "test": "vitest run --configLoader runner",
-    "seed": "tsx src/seed.ts"
+    "test:integration": "vitest run --config vitest.integration.config.ts --configLoader runner",
+    "reconcile": "node ../../scripts/tsx.mjs src/reconcile.ts",
+    "seed": "node ../../scripts/tsx.mjs src/seed.ts"
   },
   "dependencies": {
     "@nepal-hand-pay/shared-types": "*",
@@ -24,6 +26,7 @@
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.13.2",
     "nanoid": "^5.1.5",
+    "nodemailer": "^7.0.0",
     "pdfkit": "^0.16.0",
     "pino": "^9.6.0",
     "pino-http": "^10.4.0",
@@ -37,6 +40,7 @@
     "@types/express": "^5.0.1",
     "@types/jsonwebtoken": "^9.0.9",
     "@types/node": "^22.13.14",
+    "@types/nodemailer": "^7.0.0",
     "@types/pdfkit": "^0.13.8",
     "@types/supertest": "^6.0.3",
     "supertest": "^7.1.0",

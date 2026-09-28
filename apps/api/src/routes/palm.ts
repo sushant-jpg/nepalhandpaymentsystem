@@ -4,9 +4,11 @@ import { asyncHandler } from "../lib/async-handler.js";
 import { authenticate, authorize } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 import { palmClient } from "../services/palm-client.js";
-import { CustomerProfile, PalmEnrollment } from "../models/index.js";
+import { CustomerProfile, Notification, PalmEnrollment, User } from "../models/index.js";
 import { publicId } from "../lib/ids.js";
 import { audit, securityEvent } from "../lib/audit.js";
+import { AppError } from "../lib/errors.js";
+import { emitNotification } from "../lib/realtime.js";
 import { rateLimit } from "../middleware/rate-limit.js";
 
 const router = Router();
@@ -14,6 +16,16 @@ router.use(authenticate, authorize("CUSTOMER"));
 
 const image = z.string().regex(/^data:image\/(jpeg|png|webp);base64,/).max(1_500_000);
 router.post("/enroll", rateLimit(5, 15 * 60_000), validate(z.object({ handSide: z.enum(["LEFT", "RIGHT"]), consent: z.literal(true), samples: z.array(image).min(3).max(5) })), asyncHandler(async (req, res) => {
+  const [user, profile] = await Promise.all([
+    User.findById(req.auth!.userId).select("emailVerified +paymentPinHash"),
+    CustomerProfile.findOne({ userId: req.auth!.userId }).select("kycStatus"),
+  ]);
+  if (!user?.emailVerified)
+    throw new AppError(403, "AUTH_EMAIL_NOT_VERIFIED", "Verify your email before enrolling a palm.");
+  if (profile?.kycStatus !== "APPROVED")
+    throw new AppError(403, "KYC_REQUIRED", "Approved demo identity verification is required before palm enrollment.");
+  if (!user.paymentPinHash)
+    throw new AppError(403, "PAYMENT_PIN_REQUIRED", "Configure a payment PIN before palm enrollment.");
   const result = await palmClient.enroll(req.auth!.userId, req.body.handSide, req.body.samples);
   const enrollment = await PalmEnrollment.findOneAndUpdate(
     { userId: req.auth!.userId },
@@ -29,6 +41,8 @@ router.post("/enroll", rateLimit(5, 15 * 60_000), validate(z.object({ handSide: 
   await CustomerProfile.updateOne({ userId: req.auth!.userId }, { $set: { biometricConsentAt: new Date(), biometricRetentionAccepted: true } });
   await audit(req, "PALM_ENROLLED", { type: "PalmEnrollment", id: enrollment._id.toString() }, { handSide: req.body.handSide, algorithmVersion: result.algorithmVersion });
   await securityEvent(req, { userId: req.auth!.userId, category: "PALM", action: "PALM_ENROLLED", success: true });
+  const notification = await Notification.create({ userId: req.auth!.userId, type: "PALM_ENROLLED", category: "SECURITY", severity: "MEDIUM", title: "Palm enrollment updated", message: "A palm template was enrolled for prototype payments." });
+  emitNotification(req.auth!.userId, notification.toObject());
   res.status(201).json({ success: true, data: { enrolled: true, handSide: enrollment.handSide, algorithmVersion: enrollment.algorithmVersion, enrolledAt: enrollment.enrolledAt } });
 }));
 
@@ -48,6 +62,8 @@ router.delete("/", asyncHandler(async (req, res) => {
   await PalmEnrollment.updateOne({ userId: req.auth!.userId, status: "ACTIVE" }, { $set: { status: "REVOKED", revokedAt: new Date(), serviceTemplateRef: "revoked" } });
   await CustomerProfile.updateOne({ userId: req.auth!.userId }, { $set: { biometricRetentionAccepted: false } });
   await audit(req, "PALM_REMOVED", { type: "User", id: req.auth!.userId });
+  const notification = await Notification.create({ userId: req.auth!.userId, type: "PALM_REMOVED", category: "SECURITY", severity: "HIGH", title: "Palm enrollment removed", message: "Your palm template was revoked and can no longer authorize prototype payments." });
+  emitNotification(req.auth!.userId, notification.toObject());
   res.json({ success: true, data: { deleted: true } });
 }));
 

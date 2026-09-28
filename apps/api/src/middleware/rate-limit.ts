@@ -18,7 +18,10 @@ export function rateLimit(max: number, windowMs: number): RequestHandler {
         return next(new AppError(429, "RATE_LIMITED", "Too many attempts. Please try again later."));
       }
       next();
-    }).catch(() => {
+    }).catch((error: unknown) => {
+      if (error instanceof AppError && error.code === "REDIS_UNAVAILABLE") {
+        return next(error);
+      }
       const now = Date.now();
       const current = attempts.get(key);
       if (!current || current.resetAt <= now) {

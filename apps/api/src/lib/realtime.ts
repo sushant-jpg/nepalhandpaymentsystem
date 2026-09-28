@@ -5,3 +5,10 @@ export const setSocketServer = (server: Server) => { io = server; };
 export const emitPayment = (paymentId: string, state: string, extra: Record<string, unknown> = {}) => {
   io?.to(`payment:${paymentId}`).emit("payment:update", { paymentId, state, ...extra });
 };
+
+export const emitNotification = (
+  userId: string,
+  notification: Record<string, unknown>,
+) => {
+  io?.to(`user:${userId}`).emit("notification:new", notification);
+};

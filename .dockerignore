@@ -6,3 +6,10 @@ node_modules
 coverage
 .venv
 __pycache__
+**/__pycache__
+**/.pytest_cache
+.local
+.test-tmp
+*.log
+*.tsbuildinfo
+services/palm-recognition/data/*.db*

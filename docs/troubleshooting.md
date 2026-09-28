@@ -16,6 +16,8 @@ Run `pip install -r services/palm-recognition/requirements.txt` again from the c
 
 Use `docker compose up --build` or configure `MONGODB_URI` for a replica set. Do not bypass transactions for wallet movement.
 
+For native local development, `npm run dev` starts the bundled project-local replica-set launcher on `127.0.0.1:27018`. If `mongod` is installed somewhere else, set `MONGOD_PATH` to its executable.
+
 ## Redis is unavailable
 
 Development logs a warning and uses a process-local TTL fallback. This is single-process only. Production and Docker set `REDIS_REQUIRED=true` and fail readiness/startup when Redis is unavailable.

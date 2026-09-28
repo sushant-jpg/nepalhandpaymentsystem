@@ -10,4 +10,12 @@ describe("money conversion", () => {
   it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])("rejects invalid amount %s", (amount) => {
     expect(() => toPaisa(amount)).toThrow(AppError);
   });
+  it.each([0.001, 10.999, 1.005])(
+    "rejects sub-paisa precision: %s",
+    (amount) => {
+      expect(() => toPaisa(amount)).toThrowError(
+        expect.objectContaining({ code: "INVALID_AMOUNT_PRECISION" }),
+      );
+    },
+  );
 });

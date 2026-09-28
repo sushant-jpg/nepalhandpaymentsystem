@@ -1,0 +1,12 @@
+node_modules
+**/dist
+**/coverage
+.git
+.kilo
+.local
+.test-tmp
+.venv
+**/*.tsbuildinfo
+services/palm-recognition/data
+package-lock.json
+postman/*.json

@@ -35,6 +35,33 @@ export const errorHandler: ErrorRequestHandler = (error, req, res, _next) => {
     res.status(400).json({ success: false, error: { code: "INVALID_IDENTIFIER", message: "A supplied identifier is invalid." }, requestId: req.requestId });
     return;
   }
+  if (
+    error instanceof SyntaxError &&
+    typeof error === "object" &&
+    error !== null &&
+    "status" in error &&
+    error.status === 400
+  ) {
+    res.status(400).json({
+      success: false,
+      error: { code: "MALFORMED_JSON", message: "The request body is not valid JSON." },
+      requestId: req.requestId,
+    });
+    return;
+  }
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "type" in error &&
+    error.type === "entity.too.large"
+  ) {
+    res.status(413).json({
+      success: false,
+      error: { code: "PAYLOAD_TOO_LARGE", message: "The request body is too large." },
+      requestId: req.requestId,
+    });
+    return;
+  }
   if (typeof error === "object" && error !== null && "code" in error && error.code === 11000) {
     res.status(409).json({ success: false, error: { code: "DUPLICATE_RESOURCE", message: "The request conflicts with an existing record." }, requestId: req.requestId });
     return;

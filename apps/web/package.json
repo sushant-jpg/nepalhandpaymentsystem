@@ -7,7 +7,7 @@
     "dev": "vite --configLoader runner",
     "build": "tsc -b && vite build --configLoader runner",
     "typecheck": "tsc -b --pretty false",
-    "lint": "tsc -b --pretty false",
+    "lint": "eslint src --max-warnings=0",
     "test": "vitest run --passWithNoTests --configLoader runner"
   },
   "dependencies": {

@@ -6,7 +6,7 @@ from test_recognition import palm_image
 
 
 def client_for(tmp_path, monkeypatch) -> TestClient:
-    monkeypatch.setattr(main, "store", TemplateStore(str(tmp_path / "palm.db"), ""))
+    monkeypatch.setattr(main, "store", TemplateStore(str(tmp_path / "palm.db"), main.ENCRYPTION_KEY))
     main.rebuild_index()
     return TestClient(main.app)
 
@@ -54,3 +54,10 @@ def test_threshold_controls_identification(tmp_path, monkeypatch):
     result = client.post("/palm/identify", headers=headers(), json={"image": palm_image(1)})
     assert result.status_code == 200
     assert result.json()["matched"] is False
+
+
+def test_invalid_path_identifier_is_rejected(tmp_path, monkeypatch):
+    client = client_for(tmp_path, monkeypatch)
+    result = client.get("/palm/status/not%20valid", headers=headers())
+    assert result.status_code == 422
+    assert result.json()["error"]["code"] == "VALIDATION_ERROR"

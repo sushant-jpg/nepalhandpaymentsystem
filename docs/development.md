@@ -5,10 +5,12 @@
 1. Copy `.env.example` to `.env` and replace development secrets.
 2. Run `npm install`.
 3. Create `.venv` and install `services/palm-recognition/requirements.txt`.
-4. Start MongoDB as a replica set and Redis, or use Docker Compose.
-5. Run `npm run seed`, then `npm run dev`.
+4. Run `npm run dev`. It starts the project-local MongoDB replica set before the app services. Redis is optional in local development.
+5. In another terminal, run `npm run seed` if you want demo accounts.
 
 Individual services are available through `npm run dev:web`, `npm run dev:api`, and `npm run dev:palm`. The web app defaults to port 5173, API to 4000, and palm service to 8001.
+
+Local palm development generates a persistent encryption key under the ignored `.local/` directory when `PALM_TEMPLATE_ENCRYPTION_KEY` is empty. Production still requires an explicit key. Use `npm run mongo:dev:stop` when you want to stop the local database.
 
 ## Useful commands
 

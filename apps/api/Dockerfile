@@ -2,11 +2,12 @@ FROM node:22-alpine AS build
 WORKDIR /app
 COPY package*.json tsconfig.base.json ./
 COPY apps/api/package.json apps/api/package.json
+COPY apps/web/package.json apps/web/package.json
 COPY packages/shared-types/package.json packages/shared-types/package.json
-RUN npm install
+RUN npm ci
 COPY apps/api apps/api
 COPY packages/shared-types packages/shared-types
-RUN npm run build -w @nepal-hand-pay/shared-types && npm run build -w @nepal-hand-pay/api
+RUN npm run build -w @nepal-hand-pay/shared-types && npm run build -w @nepal-hand-pay/api && npm prune --omit=dev
 
 FROM node:22-alpine
 ENV NODE_ENV=production

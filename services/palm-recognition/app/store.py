@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import base64
 import hashlib
-import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -34,19 +32,26 @@ class SqlitePalmTemplateRepository:
     def __init__(self, path: str, encryption_key: str):
         self.path = path
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-        if os.getenv("PALM_ENVIRONMENT", "development") == "production" and not encryption_key:
-            raise RuntimeError("PALM_TEMPLATE_ENCRYPTION_KEY is required in production")
-        key = encryption_key.encode() if encryption_key else base64.urlsafe_b64encode(hashlib.sha256(os.getenv("PALM_SERVICE_KEY", "local-service-key-change-me").encode()).digest())
-        self.cipher = Fernet(key)
+        if not encryption_key:
+            raise RuntimeError("PALM_TEMPLATE_ENCRYPTION_KEY is required")
+        try:
+            self.cipher = Fernet(encryption_key.encode())
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                "PALM_TEMPLATE_ENCRYPTION_KEY must be a valid Fernet key"
+            ) from exc
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path)
+        connection = sqlite3.connect(self.path, timeout=10)
         connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA busy_timeout = 10000")
         return connection
 
     def _initialize(self) -> None:
         with self._connect() as connection:
+            connection.execute("PRAGMA journal_mode = WAL")
             connection.execute("""
                 CREATE TABLE IF NOT EXISTS palm_templates (
                     user_id TEXT PRIMARY KEY,

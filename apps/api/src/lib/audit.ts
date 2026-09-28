@@ -26,6 +26,7 @@ export async function securityEvent(
 ) {
   await SecurityEvent.create({
     ...event,
+    requestId: req.requestId,
     ip: req.ip,
     userAgent: req.header("user-agent"),
   });

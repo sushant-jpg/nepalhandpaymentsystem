@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ClientSession } from "mongoose";
-import { AppError } from "../lib/errors.js";
 import { Wallet } from "../models/index.js";
 import { DemoWalletProvider } from "./payment-provider.js";
 

@@ -39,6 +39,7 @@ export interface SessionUser {
   displayName: string;
   role: Role;
   emailVerified: boolean;
+  permissions?: string[];
 }
 
 export interface ApiErrorShape {
@@ -144,7 +145,7 @@ export interface SecurityEvent {
   userId?: string;
   category: "AUTHENTICATION" | "PALM" | "PAYMENT" | "ACCOUNT" | "SYSTEM";
   action: string;
-  severity: "INFO" | "WARNING" | "HIGH" | "CRITICAL";
+  severity: "INFO" | "LOW" | "MEDIUM" | "WARNING" | "HIGH" | "CRITICAL";
   success: boolean;
 }
 
