@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import hmac
 import time
+from statistics import median
 from pathlib import Path as FilePath
 from threading import Lock, RLock
 from typing import Annotated
@@ -155,6 +156,10 @@ class ImageRequest(BaseModel):
     image: str = Field(min_length=100, max_length=1_500_000)
 
 
+class QualityRequest(BaseModel):
+    samples: list[str] = Field(min_length=3, max_length=3)
+
+
 class VerifyRequest(ImageRequest):
     model_config = ConfigDict(populate_by_name=True)
     user_id: str = Field(alias="userId", min_length=8, max_length=100, pattern=r"^[A-Za-z0-9._:-]+$")
@@ -220,6 +225,32 @@ def enroll(payload: EnrollRequest) -> dict:
         template_ref = store.save(payload.user_id, payload.hand_side, ALGORITHM_VERSION, vector, quality)
         index.add(payload.user_id, vector)
     return response(True, payload.user_id, 1.0, template_ref, quality)
+
+
+@app.post("/palm/quality", dependencies=[Depends(authorize)])
+def quality(payload: QualityRequest) -> dict:
+    """Assess three transient frames without identifying or storing a palm."""
+    extracted = [extract_feature(sample) for sample in payload.samples]
+    if len({item.image_digest for item in extracted}) != len(extracted):
+        raise PalmImageError("Palm stability samples must be separate captures")
+    scores = [
+        similarity(extracted[left].vector, extracted[right].vector)
+        for left in range(len(extracted))
+        for right in range(left + 1, len(extracted))
+    ]
+    stability_score = float(median(scores))
+    return {
+        "success": True,
+        "detected": True,
+        "stable": stability_score >= 0.78,
+        "stableFrames": len(extracted),
+        "stabilityScore": round(stability_score, 5),
+        "qualityScore": round(
+            sum(item.quality for item in extracted) / len(extracted), 5
+        ),
+        "algorithmVersion": ALGORITHM_VERSION,
+        "livenessAssessment": "PASSIVE_RGB_CHECK_ONLY",
+    }
 
 
 @app.post("/palm/verify", dependencies=[Depends(authorize)])

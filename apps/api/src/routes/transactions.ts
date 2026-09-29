@@ -17,7 +17,7 @@ router.use(authenticate);
 type PersistedSummary<T> = T & { _id: { toString(): string } };
 type CustomerSummary = PersistedSummary<Pick<UserRecord, "displayName" | "email">>;
 type MerchantSummary = PersistedSummary<Pick<MerchantRecord, "businessName">>;
-type TransactionListItem = Pick<TransactionRecord, "transactionId" | "amountPaisa" | "currency" | "status" | "riskLevel" | "createdAt"> & {
+type TransactionListItem = Pick<TransactionRecord, "transactionId" | "amountPaisa" | "currency" | "status" | "paymentMethod" | "riskLevel" | "createdAt"> & {
   _id: unknown;
   customerId: Pick<CustomerSummary, "displayName"> | null;
   merchantId: MerchantSummary | null;
@@ -63,7 +63,7 @@ router.get("/", asyncHandler(async (req, res) => {
   const items = hasMore ? rows.slice(0, q.limit) : rows;
   const last = items.at(-1);
   const nextCursor = hasMore && last ? encodeDateCursor({ createdAt: new Date(last.createdAt), id: String(last._id) }) : null;
-  res.json({ success: true, data: { items: items.map((item) => ({ id: item._id, transactionId: item.transactionId, customerName: item.customerId?.displayName, merchantName: item.merchantId?.businessName, amount: fromPaisa(item.amountPaisa), currency: item.currency, status: item.status, riskLevel: item.riskLevel, createdAt: item.createdAt })), pagination: { page: q.cursor ? undefined : q.page, limit: q.limit, total, pages: total === undefined ? undefined : Math.ceil(total / q.limit), nextCursor } } });
+  res.json({ success: true, data: { items: items.map((item) => ({ id: item._id, transactionId: item.transactionId, customerName: item.customerId?.displayName, merchantName: item.merchantId?.businessName, amount: fromPaisa(item.amountPaisa), currency: item.currency, status: item.status, paymentMethod: item.paymentMethod, riskLevel: item.riskLevel, createdAt: item.createdAt })), pagination: { page: q.cursor ? undefined : q.page, limit: q.limit, total, pages: total === undefined ? undefined : Math.ceil(total / q.limit), nextCursor } } });
 }));
 
 async function authorizedTransaction(req: Request): Promise<TransactionDetail> {
@@ -96,9 +96,9 @@ router.get("/:id/receipt.pdf", authorize("CUSTOMER", "MERCHANT", "ADMIN", "AUDIT
   const doc = new PDFDocument({ size: "A4", margin: 56, info: { Title: `Receipt ${t.transactionId}` } });
   doc.pipe(res);
   doc.fillColor("#0b3b2e").fontSize(24).text("NEPAL HAND PAY");
-  doc.moveDown().fillColor("#16835c").fontSize(17).text("Demo Palm Payment Receipt");
+  doc.moveDown().fillColor("#16835c").fontSize(17).text(`Demo ${t.paymentMethod === "QR" ? "QR" : "Palm"} Payment Receipt`);
   doc.moveDown(1.5).fillColor("#1e293b").fontSize(11);
-  const rows = [["Merchant", t.merchantId.businessName], ["Amount", `NPR ${fromPaisa(t.amountPaisa).toLocaleString("en-NP", { minimumFractionDigits: 2 })}`], ["Transaction", t.transactionId], ["Reference", t.orderReference || "—"], ["Date", new Intl.DateTimeFormat("en-NP", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Kathmandu" }).format(t.completedAt ?? t.createdAt)], ["Payment method", "Palm Payment (Mock Wallet)"], ["Status", t.status], ["Refunded", `NPR ${fromPaisa(t.refundedAmountPaisa).toLocaleString("en-NP", { minimumFractionDigits: 2 })}`]];
+  const rows = [["Merchant", t.merchantId.businessName], ["Customer", t.customerId.displayName], ["Amount", `NPR ${fromPaisa(t.amountPaisa).toLocaleString("en-NP", { minimumFractionDigits: 2 })}`], ["Fee", "NPR 0.00"], ["Total", `NPR ${fromPaisa(t.amountPaisa).toLocaleString("en-NP", { minimumFractionDigits: 2 })}`], ["Transaction", t.transactionId], ["Reference", t.orderReference || "—"], ["Date", new Intl.DateTimeFormat("en-NP", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Kathmandu" }).format(t.completedAt ?? t.createdAt)], ["Payment method", `${t.paymentMethod === "QR" ? "QR" : "Palm"} Pay (Mock Wallet)`], ["Status", t.status], ["Refunded", `NPR ${fromPaisa(t.refundedAmountPaisa).toLocaleString("en-NP", { minimumFractionDigits: 2 })}`]];
   for (const [label, value] of rows) { doc.fillColor("#64748b").text(label as string); doc.fillColor("#0f172a").fontSize(13).text(value as string); doc.moveDown(0.7); }
   doc.moveDown().fontSize(9).fillColor("#64748b").text("Demo wallet receipt. No biometric information is included. This does not represent a bank settlement.");
   doc.end();

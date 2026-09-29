@@ -40,6 +40,28 @@ def test_enroll_verify_and_delete(tmp_path, monkeypatch):
     assert deleted.json()["deleted"] is True
 
 
+def test_quality_requires_three_distinct_stable_frames(tmp_path, monkeypatch):
+    client = client_for(tmp_path, monkeypatch)
+    result = client.post(
+        "/palm/quality",
+        headers=headers(),
+        json={"samples": [palm_image(-2), palm_image(), palm_image(2)]},
+    )
+    assert result.status_code == 200
+    assert result.json()["detected"] is True
+    assert result.json()["stable"] is True
+    assert result.json()["stableFrames"] == 3
+    assert result.json()["livenessAssessment"] == "PASSIVE_RGB_CHECK_ONLY"
+
+    repeated = client.post(
+        "/palm/quality",
+        headers=headers(),
+        json={"samples": [palm_image(), palm_image(), palm_image()]},
+    )
+    assert repeated.status_code == 422
+    assert repeated.json()["error"]["code"] == "PALM_IMAGE_INVALID"
+
+
 def test_duplicate_enrollment_is_rejected(tmp_path, monkeypatch):
     client = client_for(tmp_path, monkeypatch)
     assert client.post("/palm/enroll", headers=headers(), json=enrollment("customer-0001")).status_code == 200

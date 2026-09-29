@@ -118,4 +118,18 @@ export const emailService = {
       html: `<p>Hello ${htmlEscape(input.displayName)},</p><p>Your simulated <strong>NPR ${htmlEscape(input.amount)}</strong> payment to ${htmlEscape(input.merchantName)} completed.</p><p>Transaction: <code>${htmlEscape(input.transactionId)}</code></p>`,
     });
   },
+
+  async sendPaymentOtp(input: {
+    to: string;
+    displayName: string;
+    code: string;
+    merchantName: string;
+  }) {
+    return deliver({
+      to: input.to,
+      subject: "Nepal Hand Pay payment confirmation code",
+      text: `Hello ${input.displayName}, your payment confirmation code for ${input.merchantName} is ${input.code}. It expires in ${Math.ceil(config.OTP_TTL_SECONDS / 60)} minutes. Never share this code with a merchant.`,
+      html: `<p>Hello ${htmlEscape(input.displayName)},</p><p>Your payment confirmation code for ${htmlEscape(input.merchantName)} is <strong>${htmlEscape(input.code)}</strong>.</p><p>It expires in ${Math.ceil(config.OTP_TTL_SECONDS / 60)} minutes. Never share this code with a merchant.</p>`,
+    });
+  },
 };

@@ -15,6 +15,11 @@ const router = Router();
 router.use(authenticate, authorize("CUSTOMER"));
 
 const image = z.string().regex(/^data:image\/(jpeg|png|webp);base64,/).max(1_500_000);
+const qualitySamples = z.array(image).length(3);
+router.post("/quality", rateLimit(12, 60_000), validate(z.object({ samples: qualitySamples })), asyncHandler(async (req, res) => {
+  const result = await palmClient.quality(req.body.samples);
+  res.json({ success: true, data: result });
+}));
 router.post("/enroll", rateLimit(5, 15 * 60_000), validate(z.object({ handSide: z.enum(["LEFT", "RIGHT"]), consent: z.literal(true), samples: z.array(image).min(3).max(5) })), asyncHandler(async (req, res) => {
   const [user, profile] = await Promise.all([
     User.findById(req.auth!.userId).select("emailVerified +paymentPinHash"),

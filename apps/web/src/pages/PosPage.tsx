@@ -9,6 +9,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { io } from "socket.io-client";
+import type { PalmQualityResult } from "@nepal-hand-pay/shared-types";
 import { CameraCapture } from "../components/CameraCapture";
 import { Notice, PageTitle } from "../components/Ui";
 import { api, getToken } from "../lib/api";
@@ -116,9 +117,18 @@ export function PosPage() {
       setStage("CONFIRM");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Palm scan failed.");
+      throw caught;
     } finally {
       setBusy(false);
     }
+  }
+
+  async function assessPalmFrames(samples: string[]) {
+    if (!payment) throw new Error("Create a payment before scanning a palm.");
+    return api.post<PalmQualityResult>(
+      `/payments/requests/${payment.id}/quality`,
+      { samples },
+    );
   }
 
   async function pollStatus() {
@@ -282,7 +292,8 @@ export function PosPage() {
             <CameraCapture
               busy={busy}
               captureLabel="Scan customer palm"
-              onCapture={(image) => void identify(image)}
+              assessFrames={assessPalmFrames}
+              onCapture={identify}
             />
             <button
               className="btn-secondary mt-4 w-full"

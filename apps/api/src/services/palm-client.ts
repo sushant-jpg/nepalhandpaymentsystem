@@ -9,6 +9,7 @@ const palm = axios.create({
 });
 
 export interface PalmMatch { success: boolean; matched: boolean; userId?: string; similarity?: number; threshold: number; algorithmVersion: string; templateRef?: string; qualityScore?: number; livenessAssessment?: string }
+export interface PalmQuality { success: boolean; detected: boolean; stable: boolean; stableFrames: number; stabilityScore: number; qualityScore: number; algorithmVersion: string; livenessAssessment: string }
 
 async function call<T>(method: "get" | "post" | "delete", path: string, data?: unknown, timeout?: number): Promise<T> {
   try {
@@ -27,6 +28,7 @@ async function call<T>(method: "get" | "post" | "delete", path: string, data?: u
 
 export const palmClient = {
   health: () => call<{ status: string }>("get", "/health", undefined, 2_500),
+  quality: (samples: string[]) => call<PalmQuality>("post", "/palm/quality", { samples }),
   enroll: (userId: string, handSide: string, samples: string[]) => call<PalmMatch>("post", "/palm/enroll", { userId, handSide, samples }),
   identify: (image: string) => call<PalmMatch>("post", "/palm/identify", { image }),
   verify: (userId: string, image: string) => call<PalmMatch>("post", "/palm/verify", { userId, image }),

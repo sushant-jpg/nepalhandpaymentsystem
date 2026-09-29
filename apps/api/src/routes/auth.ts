@@ -83,6 +83,25 @@ function publicUser(user: SessionUserSource) {
   };
 }
 
+function isNativeMobileRequest(req: Request): boolean {
+  return (
+    req.header("x-nhp-client") === "mobile" &&
+    !req.header("origin") &&
+    !req.header("sec-fetch-site")
+  );
+}
+
+function refreshTokenFromRequest(req: Request): string | undefined {
+  if (isNativeMobileRequest(req)) {
+    const candidate = (req.body as { refreshToken?: unknown } | undefined)
+      ?.refreshToken;
+    return typeof candidate === "string" && candidate.length <= 4_096
+      ? candidate
+      : undefined;
+  }
+  return req.cookies?.nhp_refresh as string | undefined;
+}
+
 async function issueSession(
   req: Request,
   res: Response,
@@ -102,14 +121,21 @@ async function issueSession(
     lastActiveAt: new Date(),
     rotatedFromJti,
   });
-  res.cookie("nhp_refresh", refreshToken, {
-    httpOnly: true,
-    secure: config.COOKIE_SECURE === "true",
-    sameSite: "lax",
-    path: "/api/v1/auth",
-    maxAge: config.JWT_REFRESH_TTL_DAYS * 86_400_000,
-  });
-  return { accessToken: signAccessToken(safe, jti), user: safe };
+  const nativeMobile = isNativeMobileRequest(req);
+  if (!nativeMobile) {
+    res.cookie("nhp_refresh", refreshToken, {
+      httpOnly: true,
+      secure: config.COOKIE_SECURE === "true",
+      sameSite: "lax",
+      path: "/api/v1/auth",
+      maxAge: config.JWT_REFRESH_TTL_DAYS * 86_400_000,
+    });
+  }
+  return {
+    accessToken: signAccessToken(safe, jti),
+    user: safe,
+    ...(nativeMobile ? { refreshToken } : {}),
+  };
 }
 
 function describeDevice(userAgent = "") {
@@ -394,7 +420,7 @@ router.post(
   "/refresh",
   rateLimit(30, 60_000),
   asyncHandler(async (req, res) => {
-    const token = req.cookies?.nhp_refresh as string | undefined;
+    const token = refreshTokenFromRequest(req);
     if (!token)
       throw new AppError(
         401,
@@ -478,7 +504,7 @@ router.post(
 router.post(
   "/logout",
   asyncHandler(async (req, res) => {
-    const token = req.cookies?.nhp_refresh as string | undefined;
+    const token = refreshTokenFromRequest(req);
     if (token) {
       const session = await RefreshToken.findOneAndUpdate(
         { tokenHash: hashToken(token), revokedAt: { $exists: false } },
@@ -521,7 +547,8 @@ router.post(
         /* an invalid access token does not prevent refresh-token logout */
       }
     }
-    res.clearCookie("nhp_refresh", { path: "/api/v1/auth" });
+    if (!isNativeMobileRequest(req))
+      res.clearCookie("nhp_refresh", { path: "/api/v1/auth" });
     await audit(req, "USER_LOGOUT");
     res.json({ success: true, data: { message: "Signed out." } });
   }),

@@ -1,7 +1,5 @@
 import crypto from "node:crypto";
 import { Router } from "express";
-import mongoose from "mongoose";
-import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { asyncHandler } from "../lib/async-handler.js";
 import { authenticate, requirePermission } from "../middleware/auth.js";
@@ -29,7 +27,6 @@ import {
   FraudAlert,
   CustomerProfile,
   Merchant,
-  Notification,
   PalmEnrollment,
   PalmVerification,
   PaymentRequest,
@@ -43,8 +40,14 @@ import { assessPaymentRisk } from "../services/risk.js";
 import { paymentProvider } from "../services/payment-provider.js";
 import { transitionPayment } from "../services/payment-state.js";
 import { rateLimit } from "../middleware/rate-limit.js";
-import { postPaymentJournal } from "../services/ledger.js";
 import { emailService } from "../services/email.js";
+import { executeWalletPayment } from "../services/payment-execution.js";
+import {
+  consumePaymentOtp,
+  issuePaymentOtp,
+  verifyPaymentOtp,
+  verifyPaymentPin,
+} from "../services/payment-authorization.js";
 
 const router = Router();
 router.use(authenticate, requirePermission("payment.create"));
@@ -168,6 +171,7 @@ router.post(
         idempotencyKey,
         idempotencyRequestHash: bodyHash,
         providerReference: provider.providerReference,
+        paymentMethod: "PALM",
         expiresAt: new Date(Date.now() + 5 * 60_000),
       });
     } catch (error) {
@@ -238,6 +242,40 @@ router.get(
         transactionStatus: transaction?.status,
       }),
     });
+  }),
+);
+
+router.post(
+  "/requests/:id/quality",
+  rateLimit(12, 60_000),
+  validate(idParams, "params"),
+  validate(z.object({ samples: z.array(dataImage).length(3) })),
+  asyncHandler(async (req, res) => {
+    const merchant = await getMerchant(req.auth!.userId);
+    const payment = await PaymentRequest.findOne({
+      publicId: req.params.id,
+      merchantId: merchant._id,
+    }).lean();
+    if (!payment)
+      throw new AppError(
+        404,
+        "PAYMENT_NOT_FOUND",
+        "Payment request was not found.",
+      );
+    if (payment.expiresAt < new Date())
+      throw new AppError(
+        410,
+        "PAYMENT_EXPIRED",
+        "Payment request has expired.",
+      );
+    if (payment.state !== "AWAITING_PALM")
+      throw new AppError(
+        409,
+        "INVALID_PAYMENT_STATE",
+        `Palm quality cannot be assessed while payment is ${payment.state}.`,
+      );
+    const result = await palmClient.quality(req.body.samples);
+    res.json({ success: true, data: result });
   }),
 );
 
@@ -391,13 +429,11 @@ router.post(
 
       let developmentOtp: string | undefined;
       if (risk.requiresOtp) {
-        const otp = crypto.randomInt(100_000, 1_000_000).toString();
-        await setTemporary(
-          `payment:otp:${payment.publicId}`,
-          hashToken(otp),
-          config.OTP_TTL_SECONDS,
-        );
-        if (config.NODE_ENV !== "production") developmentOtp = otp;
+        ({ developmentOtp } = await issuePaymentOtp({
+          paymentId: payment.publicId,
+          customer,
+          merchantName: merchant.businessName,
+        }));
       }
       await setTemporary(
         `palm:match:${payment.publicId}`,
@@ -597,75 +633,33 @@ router.post(
       return res.json({ success: true, data: { state: "CANCELLED" } });
     }
 
-    const customer = await User.findById(payment.customerId).select(
-      "+paymentPinHash +failedPinAttempts +pinLockUntil",
-    );
-    if (!customer)
-      throw new AppError(
-        403,
-        "CUSTOMER_UNAVAILABLE",
-        "Customer account is unavailable.",
-      );
+    let customer;
     if (payment.requiresPin) {
       if (payment.state === "AWAITING_CONFIRMATION") {
         transitionPayment(payment, "AWAITING_PIN");
         await payment.save();
         emitPayment(payment.publicId, "AWAITING_PIN");
       }
-      if (customer.pinLockUntil && customer.pinLockUntil > new Date())
+      customer = await verifyPaymentPin({
+        req,
+        userId: payment.customerId.toString(),
+        paymentId: payment.publicId,
+        pin: req.body.pin,
+      });
+    } else {
+      customer = await User.findOne({
+        _id: payment.customerId,
+        status: "ACTIVE",
+      });
+      if (!customer)
         throw new AppError(
-          423,
-          "PAYMENT_PIN_LOCKED",
-          "Payment PIN is temporarily locked.",
+          403,
+          "CUSTOMER_UNAVAILABLE",
+          "Customer account is unavailable.",
         );
-      if (
-        !customer.paymentPinHash ||
-        !req.body.pin ||
-        !(await bcrypt.compare(req.body.pin, customer.paymentPinHash))
-      ) {
-        customer.failedPinAttempts = (customer.failedPinAttempts ?? 0) + 1;
-        if (customer.failedPinAttempts >= config.PIN_MAX_ATTEMPTS)
-          customer.pinLockUntil = new Date(
-            Date.now() + config.PIN_LOCKOUT_SECONDS * 1000,
-          );
-        await customer.save();
-        await securityEvent(req, {
-          userId: payment.customerId.toString(),
-          category: "PAYMENT",
-          action: "PAYMENT_PIN_FAILED",
-          severity: "HIGH",
-          success: false,
-          metadata: {
-            paymentId: payment.publicId,
-            attempts: customer.failedPinAttempts,
-          },
-        });
-        throw new AppError(
-          customer.pinLockUntil ? 423 : 401,
-          customer.pinLockUntil ? "PAYMENT_PIN_LOCKED" : "INVALID_PAYMENT_PIN",
-          customer.pinLockUntil
-            ? "Payment PIN is temporarily locked."
-            : "Payment PIN is incorrect.",
-        );
-      }
-      customer.failedPinAttempts = 0;
-      customer.pinLockUntil = undefined;
-      await customer.save();
     }
     if (payment.requiresOtp) {
-      const otpHash = await getTemporary(`payment:otp:${payment.publicId}`);
-      if (!otpHash)
-        throw new AppError(
-          410,
-          "OTP_EXPIRED",
-          "The one-time code has expired.",
-        );
-      if (!req.body.otp || hashToken(req.body.otp) !== otpHash)
-        throw new AppError(
-          401,
-          "INVALID_OTP",
-          "The one-time code is incorrect.",
-        );
+      await verifyPaymentOtp(payment.publicId, req.body.otp);
     }
 
     await paymentProvider.verifyPayment(
@@ -729,114 +723,28 @@ router.post(
       );
     }
     const authorizedCustomerId = payment.customerId;
-    if (payment.requiresOtp)
-      await deleteTemporary(`payment:otp:${payment.publicId}`);
+    if (payment.requiresOtp) await consumePaymentOtp(payment.publicId);
     emitPayment(payment.publicId, "PROCESSING");
 
-    const processingResult: { transactionId?: string } = {};
+    let execution;
     try {
-      await withDistributedLock(
-        `payment:${payment.publicId}`,
-        30_000,
-        async () => {
-          const session = await mongoose.startSession();
-          try {
-            await session.withTransaction(async () => {
-              const existing = await Transaction.findOne({
-                paymentRequestId: payment._id,
-              }).session(session);
-              if (existing) {
-                processingResult.transactionId = existing.transactionId;
-                await PaymentRequest.updateOne(
-                  { _id: payment._id, state: "PROCESSING" },
-                  { $set: { state: "SUCCESS" } },
-                  { session },
-                );
-                return;
-              }
-              const capture = await paymentProvider.capturePayment(
-                authorizedCustomerId.toString(),
-                merchant._id.toString(),
-                payment.amountPaisa,
-                session,
-              );
-              await postPaymentJournal(
-                {
-                  paymentId: payment.publicId,
-                  customerId: authorizedCustomerId.toString(),
-                  merchantId: merchant._id.toString(),
-                  amountPaisa: payment.amountPaisa,
-                  requestId: req.requestId,
-                },
-                session,
-              );
-              const [createdTransaction] = await Transaction.create(
-                [
-                  {
-                    transactionId: publicId("NHP"),
-                    customerId: authorizedCustomerId,
-                    merchantId: merchant._id,
-                    paymentRequestId: payment._id,
-                    amountPaisa: payment.amountPaisa,
-                    type: "PAYMENT",
-                    status: "SUCCESS",
-                    palmVerificationId: payment.palmVerificationId,
-                    riskLevel: payment.riskLevel,
-                    riskScore: payment.riskScore,
-                    description: payment.description,
-                    orderReference: payment.orderReference,
-                    providerReference: capture.providerReference,
-                    providerMode: capture.mode,
-                    completedAt: new Date(),
-                  },
-                ],
-                { session },
-              );
-              if (!createdTransaction)
-                throw new AppError(
-                  500,
-                  "TRANSACTION_CREATE_FAILED",
-                  "Payment transaction could not be created.",
-                );
-              processingResult.transactionId = createdTransaction.transactionId;
-              const completed = await PaymentRequest.updateOne(
-                { _id: payment._id, state: "PROCESSING" },
-                {
-                  $set: {
-                    state: "SUCCESS",
-                    providerReference: capture.providerReference,
-                  },
-                },
-                { session },
-              );
-              if (completed.modifiedCount !== 1)
-                throw new AppError(
-                  409,
-                  "PAYMENT_STATE_RACE",
-                  "Payment state changed during processing.",
-                );
-              await Notification.create(
-                [
-                  {
-                    userId: authorizedCustomerId,
-                    type: "PAYMENT_SUCCESS",
-                    category: "PAYMENT",
-                    severity: "INFO",
-                    title: "Payment successful",
-                    message: `NPR ${fromPaisa(payment.amountPaisa).toLocaleString()} paid to ${merchant.businessName}.`,
-                    metadata: {
-                      transactionId: createdTransaction.transactionId,
-                    },
-                  },
-                ],
-                { session },
-              );
-            });
-          } finally {
-            await session.endSession();
-          }
-        },
-      );
+      execution = await executeWalletPayment({
+        paymentRequestObjectId: payment._id.toString(),
+        paymentId: payment.publicId,
+        customerId: authorizedCustomerId.toString(),
+        customerUserId: authorizedCustomerId.toString(),
+        merchantId: merchant._id.toString(),
+        merchantUserId: merchant.userId.toString(),
+        merchantName: merchant.businessName,
+        amountPaisa: payment.amountPaisa,
+        description: payment.description ?? undefined,
+        orderReference: payment.orderReference ?? undefined,
+        palmVerificationId: payment.palmVerificationId?.toString(),
+        riskLevel: payment.riskLevel!,
+        riskScore: payment.riskScore!,
+        paymentMethod: "PALM",
+        requestId: req.requestId,
+      });
     } catch (error) {
       await PaymentRequest.updateOne(
         { _id: payment._id, state: "PROCESSING" },
@@ -871,23 +779,7 @@ router.post(
       throw error;
     }
 
-    const transactionId = processingResult.transactionId;
-    if (!transactionId)
-      throw new AppError(
-        500,
-        "PAYMENT_TRANSACTION_MISSING",
-        "Payment transaction could not be finalized.",
-      );
-    const wallet = await Wallet.findOne({
-      ownerType: "CUSTOMER",
-      ownerId: authorizedCustomerId,
-    }).lean();
-    if (!wallet)
-      throw new AppError(
-        500,
-        "CUSTOMER_WALLET_MISSING",
-        "Customer wallet could not be loaded after payment.",
-      );
+    const transactionId = execution.transactionId;
     await audit(
       req,
       "PAYMENT_SUCCESS",
@@ -909,6 +801,15 @@ router.post(
       message: `NPR ${fromPaisa(payment.amountPaisa).toLocaleString()} paid to ${merchant.businessName}.`,
       transactionId,
     });
+    emitNotification(merchant.userId.toString(), {
+      type: "PAYMENT_RECEIVED",
+      category: "PAYMENT",
+      severity: "INFO",
+      title: "Payment received",
+      message: `NPR ${fromPaisa(payment.amountPaisa).toLocaleString()} received by Palm Pay.`,
+      transactionId,
+      paymentId: payment.publicId,
+    });
     emitPayment(payment.publicId, "SUCCESS", { transactionId });
     res.json({
       success: true,
@@ -916,7 +817,7 @@ router.post(
         state: "SUCCESS",
         transactionId,
         amount: fromPaisa(payment.amountPaisa),
-        remainingBalance: fromPaisa(wallet.balancePaisa),
+        remainingBalance: fromPaisa(execution.remainingBalancePaisa),
         providerMode: "MOCK",
       },
     });

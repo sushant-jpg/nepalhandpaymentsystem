@@ -227,8 +227,9 @@ const transactionSchema = new Schema(
     },
     paymentMethod: {
       type: String,
-      enum: ["PALM_WALLET"],
-      default: "PALM_WALLET",
+      enum: ["PALM", "QR", "WALLET", "PIN"],
+      default: "PALM",
+      index: true,
     },
     palmVerificationId: { type: objectId, ref: "PalmVerification" },
     riskLevel: {
@@ -313,6 +314,7 @@ const paymentRequestSchema = new Schema(
       index: true,
     },
     customerId: { type: objectId, ref: "User", index: true },
+    createdByUserId: { type: objectId, ref: "User", index: true },
     amountPaisa: {
       type: Number,
       required: true,
@@ -320,6 +322,16 @@ const paymentRequestSchema = new Schema(
       validate: Number.isSafeInteger,
     },
     currency: { type: String, enum: ["NPR"], default: "NPR" },
+    paymentMethod: {
+      type: String,
+      enum: ["PALM", "QR"],
+      default: "PALM",
+      required: true,
+      index: true,
+    },
+    qrType: { type: String, enum: ["STATIC", "DYNAMIC"] },
+    qrNonce: { type: String, select: false },
+    qrNonceHash: { type: String, select: false },
     description: { type: String, maxlength: 180 },
     state: {
       type: String,
@@ -359,6 +371,8 @@ const paymentRequestSchema = new Schema(
     providerReference: String,
     failureCode: String,
     orderReference: { type: String, maxlength: 80 },
+    completedAt: Date,
+    cancelledAt: Date,
   },
   timestamps,
 );
@@ -371,6 +385,7 @@ paymentRequestSchema.index(
   { unique: true, sparse: true },
 );
 paymentRequestSchema.index({ state: 1, expiresAt: 1 });
+paymentRequestSchema.index({ merchantId: 1, paymentMethod: 1, createdAt: -1 });
 
 const refundSchema = new Schema(
   {
