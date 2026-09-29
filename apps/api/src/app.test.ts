@@ -53,6 +53,16 @@ describe("API envelope and route protection", () => {
     expect(response.status).toBe(403);
     expect(response.body.error.code).toBe("UNTRUSTED_ORIGIN");
   });
+  it("does not let a cross-site browser opt into native mobile auth", async () => {
+    const response = await request(app)
+      .post("/api/v1/auth/logout")
+      .set("Origin", "https://attacker.example")
+      .set("Sec-Fetch-Site", "cross-site")
+      .set("X-NHP-Client", "mobile")
+      .send({ refreshToken: "not-a-real-token" });
+    expect(response.status).toBe(403);
+    expect(response.body.error.code).toBe("UNTRUSTED_ORIGIN");
+  });
   it("accepts a loopback Vite origin on a fallback development port", async () => {
     const response = await request(app)
       .post("/api/v1/auth/register")

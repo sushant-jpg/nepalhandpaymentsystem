@@ -17,6 +17,7 @@ import securityRoutes from "./routes/security.js";
 import analyticsRoutes from "./routes/analytics.js";
 import healthRoutes from "./routes/health.js";
 import ledgerRoutes from "./routes/ledger.js";
+import qrRoutes from "./routes/qr.js";
 import {
   isTrustedBrowserOrigin,
   requireTrustedBrowserOrigin,
@@ -30,7 +31,13 @@ app.use(cors({
   origin: (origin, callback) =>
     callback(null, !origin || isTrustedBrowserOrigin(origin)),
   credentials: true,
-  allowedHeaders: ["Content-Type", "Authorization", "Idempotency-Key"],
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "Idempotency-Key",
+    "X-Request-ID",
+    "X-NHP-Client",
+  ],
 }));
 app.use(requireTrustedBrowserOrigin);
 app.use(express.json({ limit: config.API_BODY_LIMIT }));
@@ -58,6 +65,7 @@ v1.use("/admin", adminRoutes);
 v1.use("/security", securityRoutes);
 v1.use("/analytics", analyticsRoutes);
 v1.use("/ledger", ledgerRoutes);
+v1.use("/qr", qrRoutes);
 app.use("/api/v1", v1);
 app.use("/health", healthRoutes);
 
