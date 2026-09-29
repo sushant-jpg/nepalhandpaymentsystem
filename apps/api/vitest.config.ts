@@ -1,5 +1,11 @@
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
-  test: { environment: "node", globals: true, exclude: ["dist/**", "node_modules/**", "src/integration/**"], coverage: { reporter: ["text", "json"] } },
+  test: {
+    environment: "node",
+    globals: true,
+    setupFiles: ["./src/test/setup.ts"],
+    exclude: ["dist/**", "node_modules/**", "src/integration/**"],
+    coverage: { reporter: ["text", "json"] },
+  },
 });

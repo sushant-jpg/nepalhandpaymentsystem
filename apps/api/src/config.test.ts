@@ -9,10 +9,24 @@ const base = {
 };
 
 describe("environment validation", () => {
+  it("parses a valid test configuration", () => {
+    expect(parseEnvironment(base)).toMatchObject(base);
+  });
+
   it("requires signing and service secrets in every environment", () => {
     expect(() => parseEnvironment({ NODE_ENV: "test" })).toThrow(
-      /JWT_ACCESS_SECRET/,
+      /JWT_ACCESS_SECRET.*JWT_REFRESH_SECRET.*PALM_SERVICE_KEY/,
     );
+  });
+
+  it("rejects malformed secrets", () => {
+    expect(() =>
+      parseEnvironment({
+        ...base,
+        JWT_ACCESS_SECRET: "too-short",
+        PALM_SERVICE_KEY: "also-too-short",
+      }),
+    ).toThrow(/JWT_ACCESS_SECRET.*PALM_SERVICE_KEY/);
   });
 
   it("rejects the same secret for access and refresh tokens", () => {
