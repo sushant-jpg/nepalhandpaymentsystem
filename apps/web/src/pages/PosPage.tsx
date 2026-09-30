@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   CheckCircle2,
   Hand,
@@ -57,6 +57,14 @@ export function PosPage() {
   >("disconnected");
   const [createKey, setCreateKey] = useState(() => crypto.randomUUID());
   const [processKey, setProcessKey] = useState(() => crypto.randomUUID());
+  const pollTimer = useRef<number | undefined>(undefined);
+
+  useEffect(
+    () => () => {
+      if (pollTimer.current !== undefined) window.clearTimeout(pollTimer.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!payment) return;
@@ -70,7 +78,6 @@ export function PosPage() {
     });
     socket.on("disconnect", () => setConnection("disconnected"));
     socket.io.on("reconnect_attempt", () => setConnection("reconnecting"));
-    socket.emit("payment:watch", payment.id);
     socket.on("payment:update", (update: { state: string }) =>
       setLive(update.state.replaceAll("_", " ")),
     );
@@ -147,13 +154,13 @@ export function PosPage() {
         });
         setStage("SUCCESS");
       } else if (current.state === "PROCESSING") {
-        window.setTimeout(() => void pollStatus(), 2_000);
+        pollTimer.current = window.setTimeout(() => void pollStatus(), 2_000);
       } else if (["FAILED", "CANCELLED", "EXPIRED"].includes(current.state)) {
         setStage("FAILED");
         setError(`Payment ${current.state.toLowerCase()}.`);
       }
     } catch {
-      window.setTimeout(() => void pollStatus(), 2_500);
+      pollTimer.current = window.setTimeout(() => void pollStatus(), 2_500);
     }
   }
 
@@ -183,7 +190,7 @@ export function PosPage() {
         setError("Customer declined the payment.");
       } else if (response.state === "PROCESSING" || !response.transactionId) {
         setStage("PROCESSING");
-        window.setTimeout(() => void pollStatus(), 1_500);
+        pollTimer.current = window.setTimeout(() => void pollStatus(), 1_500);
       } else {
         setResult(response as Result);
         setStage("SUCCESS");
@@ -199,6 +206,8 @@ export function PosPage() {
   }
 
   function reset() {
+    if (pollTimer.current !== undefined) window.clearTimeout(pollTimer.current);
+    pollTimer.current = undefined;
     setStage("AMOUNT");
     setPayment(null);
     setMatch(null);

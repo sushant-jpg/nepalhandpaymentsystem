@@ -192,7 +192,6 @@ export interface DynamicPaymentQrPayload {
   type: "payment_request";
   paymentRequestId: string;
   merchantId: string;
-  amountMinor: number;
   currency: "NPR";
   expiresAt: string;
   nonce: string;
@@ -228,8 +227,8 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Parses only the small public QR envelope. Financial values in the envelope
- * are display hints; clients must always fetch the authoritative request.
+ * Parses only the small public QR envelope. Financial values are deliberately
+ * excluded; clients must always fetch the authoritative request from the API.
  */
 export function parseQrPayload(value: string): QrPayload {
   if (value.length < 10 || value.length > 2_048)
@@ -260,9 +259,6 @@ export function parseQrPayload(value: string): QrPayload {
     /^NHPR-[A-Z0-9-]{10,}$/.test(parsed.paymentRequestId) &&
     typeof parsed.merchantId === "string" &&
     /^[a-f\d]{24}$/i.test(parsed.merchantId) &&
-    typeof parsed.amountMinor === "number" &&
-    Number.isSafeInteger(parsed.amountMinor) &&
-    parsed.amountMinor > 0 &&
     typeof parsed.expiresAt === "string" &&
     Number.isFinite(Date.parse(parsed.expiresAt)) &&
     typeof parsed.nonce === "string" &&
@@ -273,7 +269,6 @@ export function parseQrPayload(value: string): QrPayload {
       type: "payment_request",
       paymentRequestId: parsed.paymentRequestId,
       merchantId: parsed.merchantId,
-      amountMinor: parsed.amountMinor,
       currency: "NPR",
       expiresAt: parsed.expiresAt,
       nonce: parsed.nonce,

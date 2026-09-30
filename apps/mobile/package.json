@@ -11,7 +11,7 @@
     "build": "expo export --platform web --output-dir dist",
     "typecheck": "tsc --noEmit",
     "lint": "eslint app src --max-warnings=0",
-    "test": "vitest run --config vitest.config.ts"
+    "test": "vitest run --config vitest.config.ts --configLoader runner"
   },
   "dependencies": {
     "@nepal-hand-pay/shared-types": "*",

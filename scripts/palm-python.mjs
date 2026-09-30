@@ -45,7 +45,7 @@ const childEnvironment = mode === "test"
 
 const args = mode === "test"
   ? [...prefix, "-m", "pytest", "-p", "no:cacheprovider", `--basetemp=${testTemp}`, "services/palm-recognition/tests"]
-  : [...prefix, "-m", "uvicorn", "app.main:app", "--app-dir", "services/palm-recognition", "--reload", "--port", "8001"];
+  : [...prefix, "-m", "uvicorn", "app.main:app", "--app-dir", "services/palm-recognition", "--host", "0.0.0.0", "--reload", "--port", "8001"];
 
 const child = spawn(command, args, {
   stdio: "inherit",

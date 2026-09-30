@@ -1,10 +1,10 @@
 import { Redirect, Tabs } from "expo-router";
-import { Text } from "react-native";
+import { Text, type ColorValue } from "react-native";
 import { Loading } from "@/components/ui";
 import { useAuth } from "@/context/AuthContext";
 import { colors } from "@/theme";
 
-function TabIcon({ symbol, color }: { symbol: string; color: string }) {
+function TabIcon({ symbol, color }: { symbol: string; color: ColorValue }) {
   return <Text style={{ color, fontSize: 18 }}>{symbol}</Text>;
 }
 
@@ -39,10 +39,26 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
+        name="qr-pay"
+        options={{
+          title: "QR Pay",
+          href: user.role === "CUSTOMER" ? "./qr-pay" : null,
+          tabBarIcon: ({ color }) => <TabIcon symbol="QR" color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="generate-qr"
+        options={{
+          title: "Generate",
+          href: user.role === "MERCHANT" ? "./generate-qr" : null,
+          tabBarIcon: ({ color }) => <TabIcon symbol="QR" color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="palm-pay"
         options={{
           title: "Palm Pay",
-          href: user.role === "MERCHANT" ? "/(tabs)/palm-pay" : null,
+          href: user.role === "MERCHANT" ? "./palm-pay" : null,
           tabBarIcon: ({ color }) => <TabIcon symbol="✋" color={color} />,
         }}
       />
@@ -67,6 +83,9 @@ export default function TabsLayout() {
           tabBarIcon: ({ color }) => <TabIcon symbol="◎" color={color} />,
         }}
       />
+      <Tabs.Screen name="wallet" options={{ href: null }} />
+      <Tabs.Screen name="palm" options={{ href: null }} />
+      <Tabs.Screen name="security" options={{ href: null }} />
     </Tabs>
   );
 }

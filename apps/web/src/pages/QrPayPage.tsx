@@ -58,6 +58,7 @@ export function QrPayPage() {
   const [requiresPin, setRequiresPin] = useState(false);
   const [requiresOtp, setRequiresOtp] = useState(false);
   const [developmentOtp, setDevelopmentOtp] = useState("");
+  const [nonce, setNonce] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [createKey, setCreateKey] = useState(key);
@@ -78,7 +79,7 @@ export function QrPayPage() {
         return;
       }
       const details = await api.get<QrPaymentRequestView>(
-        `/qr/payment-requests/${payload.paymentRequestId}`,
+        `/qr/payment-requests/${payload.paymentRequestId}?nonce=${encodeURIComponent(payload.nonce)}`,
       );
       if (details.merchantId !== payload.merchantId)
         throw new Error(t("qr.merchantMismatch"));
@@ -91,6 +92,7 @@ export function QrPayPage() {
               : t("qr.alreadyUsed"),
         );
       setRequest(details);
+      setNonce(payload.nonce);
       setStage("REVIEW");
     } catch (caught) {
       setError(
@@ -148,6 +150,7 @@ export function QrPayPage() {
           decision,
           pin: pin || undefined,
           otp: otp || undefined,
+          nonce: nonce || undefined,
         },
         { idempotencyKey: confirmKey, timeoutMs: 35_000 },
       );
@@ -191,6 +194,7 @@ export function QrPayPage() {
     setRequiresPin(false);
     setRequiresOtp(false);
     setDevelopmentOtp("");
+    setNonce("");
     setError("");
     setCreateKey(key());
     setConfirmKey(key());

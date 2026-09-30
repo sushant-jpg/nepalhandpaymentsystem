@@ -66,6 +66,10 @@ const confirmBody = z.object({
   decision: z.enum(["CONFIRM", "DECLINE"]),
   pin: z.string().regex(/^\d{4,8}$/).optional(),
   otp: z.string().regex(/^\d{6}$/).optional(),
+  nonce: z.string().regex(/^[A-Za-z0-9_-]{16,128}$/).optional(),
+});
+const requestQuery = z.object({
+  nonce: z.string().regex(/^[A-Za-z0-9_-]{16,128}$/).optional(),
 });
 
 async function approvedMerchantForUser(userId: string) {
@@ -113,7 +117,6 @@ function dynamicPayload(
     type: "payment_request",
     paymentRequestId: payment.publicId,
     merchantId: payment.merchantId.toString(),
-    amountMinor: payment.amountPaisa,
     currency: "NPR",
     expiresAt: payment.expiresAt.toISOString(),
     nonce,
@@ -339,13 +342,21 @@ router.get(
   "/payment-requests/:id",
   authorize("CUSTOMER", "MERCHANT"),
   validate(paymentIdParams, "params"),
+  validate(requestQuery, "query"),
   asyncHandler(async (req, res) => {
     const payment = await PaymentRequest.findOne({
       publicId: req.params.id,
       paymentMethod: "QR",
-    });
+    }).select("+qrNonceHash");
     if (!payment)
       throw new AppError(404, "QR_NOT_FOUND", "QR payment request was not found.");
+    if (
+      req.auth!.role === "CUSTOMER" &&
+      payment.qrType === "DYNAMIC" &&
+      (!req.query.nonce ||
+        hashToken(String(req.query.nonce)) !== payment.qrNonceHash)
+    )
+      throw new AppError(400, "QR_INVALID", "The QR payment code is invalid.");
     const merchant = await Merchant.findById(payment.merchantId);
     if (!merchant || merchant.approvalStatus !== "APPROVED")
       throw new AppError(
@@ -427,6 +438,7 @@ router.post(
       paymentId: req.params.id,
       decision: req.body.decision,
       customerId: req.auth!.userId,
+      nonce: req.body.nonce,
     });
 
     const outcome = await withDistributedLock(
@@ -436,9 +448,16 @@ router.post(
         let payment = await PaymentRequest.findOne({
           publicId: req.params.id,
           paymentMethod: "QR",
-        }).select("+processIdempotencyKey +processRequestHash");
+        }).select(
+          "+processIdempotencyKey +processRequestHash +qrNonceHash",
+        );
         if (!payment)
           throw new AppError(404, "QR_NOT_FOUND", "QR payment request was not found.");
+        if (
+          payment.qrType === "DYNAMIC" &&
+          (!req.body.nonce || hashToken(req.body.nonce) !== payment.qrNonceHash)
+        )
+          throw new AppError(400, "QR_INVALID", "The QR payment code is invalid.");
         const merchant = await approvedMerchant(payment.merchantId.toString());
         await expireIfNecessary(payment);
 
@@ -643,7 +662,7 @@ router.post(
                 riskLevel: risk.level,
                 riskScore: risk.score,
                 requiresPin: risk.requiresPin,
-                requiresOtp: true,
+                requiresOtp: risk.requiresOtp,
               },
             },
           );

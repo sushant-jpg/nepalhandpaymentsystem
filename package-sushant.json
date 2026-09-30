@@ -1,0 +1,57 @@
+{
+  "name": "nepal-hand-payment-system",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n web,api,palm -c cyan,green,magenta \"npm run dev -w @nepal-hand-pay/web\" \"npm run dev -w @nepal-hand-pay/api\" \"npm run dev:palm\"",
+    "mongo:dev": "node scripts/mongo-dev.mjs start",
+    "mongo:dev:stop": "node scripts/mongo-dev.mjs stop",
+    "mongo:dev:status": "node scripts/mongo-dev.mjs status",
+    "dev:web": "npm run dev -w @nepal-hand-pay/web",
+    "dev:api": "npm run dev -w @nepal-hand-pay/api",
+    "dev:palm": "node scripts/palm-python.mjs dev",
+    "build": "npm run build -w @nepal-hand-pay/shared-types && npm run build -w @nepal-hand-pay/api && npm run build -w @nepal-hand-pay/web",
+    "typecheck": "npm run build -w @nepal-hand-pay/shared-types && npm run typecheck -w @nepal-hand-pay/api && npm run typecheck -w @nepal-hand-pay/web",
+    "lint": "eslint . --max-warnings=0",
+    "test": "npm run build -w @nepal-hand-pay/shared-types && npm run test -w @nepal-hand-pay/api && npm run test -w @nepal-hand-pay/web",
+    "test:api": "npm run build -w @nepal-hand-pay/shared-types && npm run test -w @nepal-hand-pay/api",
+    "test:integration": "npm run build -w @nepal-hand-pay/shared-types && npm run test:integration -w @nepal-hand-pay/api",
+    "test:web": "npm run test -w @nepal-hand-pay/web",
+    "test:palm": "node scripts/palm-python.mjs test",
+    "test:all": "npm test && npm run test:palm",
+    "test:postman": "npx --yes newman@6.2.1 run postman/NepalHandPaymentSystem.postman_collection.json -e postman/NepalHandPaymentSystem.local.postman_environment.json --folder \"00 Health\"",
+    "validate:postman": "node scripts/validate-postman.mjs",
+    "test:load:health": "k6 run tests/load/health.js",
+    "docker:up": "docker compose up --build",
+    "docker:down": "docker compose down",
+    "seed": "npm run seed -w @nepal-hand-pay/api",
+    "reconcile": "npm run reconcile -w @nepal-hand-pay/api",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "security:audit": "npm audit --audit-level=high"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.7",
+    "concurrently": "^9.1.2",
+    "eslint": "^10.11.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.7",
+    "globals": "^17.12.0",
+    "jsdom": "^30.1.1",
+    "prettier": "^3.5.3",
+    "typescript": "^5.8.2",
+    "typescript-eslint": "^8.70.1"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  }
+}

@@ -1,0 +1,15 @@
+node_modules
+**/node_modules
+**/dist
+.git
+.env
+coverage
+.venv
+__pycache__
+**/__pycache__
+**/.pytest_cache
+.local
+.test-tmp
+*.log
+*.tsbuildinfo
+services/palm-recognition/data/*.db*

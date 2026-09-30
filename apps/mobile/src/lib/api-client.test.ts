@@ -121,7 +121,7 @@ describe("mobile API client", () => {
       fetcher: vi.fn<typeof fetch>().mockRejectedValue(new TypeError("offline")),
     });
 
-    await expect(client.logout()).rejects.toThrow(/Cannot connect/);
+    await expect(client.logout()).rejects.toThrow(/API unavailable/);
     await expect(sessionStore.read()).resolves.toBeNull();
   });
 });

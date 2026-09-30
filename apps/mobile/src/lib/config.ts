@@ -5,7 +5,10 @@ export class MobileConfigurationError extends Error {
   }
 }
 
-export function resolveApiUrl(value: string | undefined): string {
+export function resolveApiUrl(
+  value: string | undefined,
+  production = process.env.NODE_ENV === "production",
+): string {
   const candidate = value?.trim().replace(/\/$/, "");
   if (!candidate)
     throw new MobileConfigurationError(
@@ -30,6 +33,10 @@ export function resolveApiUrl(value: string | undefined): string {
   if (!parsed.pathname.endsWith("/api/v1"))
     throw new MobileConfigurationError(
       "EXPO_PUBLIC_API_URL must include the /api/v1 path.",
+    );
+  if (production && parsed.protocol !== "https:")
+    throw new MobileConfigurationError(
+      "EXPO_PUBLIC_API_URL must use HTTPS in production.",
     );
   return candidate;
 }

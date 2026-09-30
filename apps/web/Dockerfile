@@ -3,6 +3,7 @@ WORKDIR /app
 COPY package*.json tsconfig.base.json ./
 COPY apps/api/package.json apps/api/package.json
 COPY apps/web/package.json apps/web/package.json
+COPY apps/mobile/package.json apps/mobile/package.json
 COPY packages/shared-types/package.json packages/shared-types/package.json
 RUN npm ci
 COPY apps/web apps/web

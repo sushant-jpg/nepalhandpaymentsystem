@@ -1,0 +1,132 @@
+name: nepal-hand-pay
+services:
+  mongodb:
+    image: mongo:7
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    ports: ["27017:27017"]
+    volumes: ["mongo-data:/data/db"]
+    restart: unless-stopped
+    stop_grace_period: 20s
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 4s
+      retries: 20
+      start_period: 5s
+
+  mongo-init:
+    image: mongo:7
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        mongosh --host mongodb:27017 --quiet --eval
+        "try { rs.status() } catch (e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'mongodb:27017'}]}) }" &&
+        until mongosh --host mongodb:27017 --quiet --eval "quit(db.hello().isWritablePrimary ? 0 : 1)"; do sleep 1; done
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports: ["6379:6379"]
+    volumes: ["redis-data:/data"]
+    restart: unless-stopped
+    stop_grace_period: 10s
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 3s
+
+  palm-service:
+    build: ./services/palm-recognition
+    environment:
+      PALM_ENVIRONMENT: production
+      PALM_SERVICE_KEY: ${PALM_SERVICE_KEY:?Set PALM_SERVICE_KEY}
+      PALM_TEMPLATE_ENCRYPTION_KEY: ${PALM_TEMPLATE_ENCRYPTION_KEY:?Set PALM_TEMPLATE_ENCRYPTION_KEY}
+      PALM_MATCH_THRESHOLD: ${PALM_MATCH_THRESHOLD:-0.88}
+      PALM_DUPLICATE_THRESHOLD: ${PALM_DUPLICATE_THRESHOLD:-0.97}
+      PALM_MIN_QUALITY: ${PALM_MIN_QUALITY:-0.18}
+      PALM_IDENTIFY_CANDIDATE_LIMIT: ${PALM_IDENTIFY_CANDIDATE_LIMIT:-10}
+      PALM_DUPLICATE_CANDIDATE_LIMIT: ${PALM_DUPLICATE_CANDIDATE_LIMIT:-50}
+      PALM_RATE_LIMIT_PER_MINUTE: ${PALM_RATE_LIMIT_PER_MINUTE:-300}
+      PALM_DATABASE_PATH: /app/data/palm.db
+    volumes: ["palm-data:/app/data"]
+    ports: ["8001:8001"]
+    restart: unless-stopped
+    stop_grace_period: 15s
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment:
+      NODE_ENV: production
+      DEMO_MODE: ${DEMO_MODE:-true}
+      PORT: 4000
+      MONGODB_URI: mongodb://mongodb:27017/nepal_hand_pay?replicaSet=rs0
+      REDIS_URL: redis://redis:6379
+      REDIS_REQUIRED: "true"
+      PALM_SERVICE_URL: http://palm-service:8001
+      PALM_SERVICE_KEY: ${PALM_SERVICE_KEY:?Set PALM_SERVICE_KEY}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?Set JWT_ACCESS_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?Set JWT_REFRESH_SECRET}
+      FRONTEND_URL: http://localhost:8080
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      API_BODY_LIMIT: ${API_BODY_LIMIT:-2mb}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+    depends_on:
+      mongo-init:
+        condition: service_completed_successfully
+      palm-service:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports: ["4000:4000"]
+    restart: unless-stopped
+    stop_grace_period: 20s
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:4000/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        VITE_API_URL: /api/v1
+        VITE_SOCKET_URL: ""
+    depends_on:
+      api:
+        condition: service_healthy
+    ports: ["8080:80"]
+    restart: unless-stopped
+    stop_grace_period: 10s
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+volumes:
+  mongo-data:
+  palm-data:
+  redis-data:

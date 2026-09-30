@@ -39,7 +39,7 @@ interface ApiClientOptions {
   baseUrl(): string;
   sessionStore: SessionStore;
   native: boolean;
-  fetcher?: typeof fetch;
+  fetcher?: (input: string, init?: RequestInit) => Promise<Response>;
   requestId?: () => string;
 }
 
@@ -53,11 +53,11 @@ export class ApiClient {
   private hydrated = false;
   private refreshPromise: Promise<boolean> | null = null;
   private unauthorizedHandler: (() => void) | undefined;
-  private readonly fetcher: typeof fetch;
+  private readonly fetcher: (input: string, init?: RequestInit) => Promise<Response>;
   private readonly requestId: () => string;
 
   constructor(private readonly options: ApiClientOptions) {
-    this.fetcher = options.fetcher ?? fetch;
+    this.fetcher = options.fetcher ?? ((input, init) => fetch(input, init));
     this.requestId = options.requestId ?? defaultRequestId;
   }
 
@@ -172,9 +172,12 @@ export class ApiClient {
           "The request timed out. Check the transaction status before retrying.",
           "REQUEST_TIMEOUT",
         );
+      const offline = typeof navigator !== "undefined" && navigator.onLine === false;
       throw new MobileApiError(
-        "Cannot connect to Nepal Hand Pay server. Check that your phone and development computer are on the same Wi-Fi network.",
-        "API_UNAVAILABLE",
+        offline
+          ? "Network unavailable. Connect this device to the internet or your development Wi-Fi."
+          : "API unavailable. Check that Nepal Hand Pay is running and that your phone can reach its configured LAN or HTTPS address.",
+        offline ? "NETWORK_UNAVAILABLE" : "API_UNAVAILABLE",
       );
     } finally {
       clearTimeout(timeout);

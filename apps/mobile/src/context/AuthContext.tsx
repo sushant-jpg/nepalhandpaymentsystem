@@ -10,7 +10,7 @@ import {
 } from "react";
 import { api } from "../lib/api";
 
-interface RegisterInput {
+interface RegisterInput extends Record<string, unknown> {
   role: "CUSTOMER" | "MERCHANT";
   displayName: string;
   email: string;

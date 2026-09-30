@@ -13,7 +13,7 @@
         {
           "cameraPermission": "Allow Nepal Hand Pay to capture palm images for the prototype recognition flow.",
           "recordAudioAndroid": false,
-          "barcodeScannerEnabled": false
+          "barcodeScannerEnabled": true
         }
       ],
       [

@@ -23,5 +23,8 @@ describe("mobile API URL", () => {
       /must not contain credentials/,
     );
     expect(() => resolveApiUrl("https://example.test")).toThrow(/api\/v1/);
+    expect(() =>
+      resolveApiUrl("http://api.example.test/api/v1", true),
+    ).toThrow(/HTTPS/);
   });
 });

@@ -1,4 +1,5 @@
-import { StyleSheet, Text, View } from "react-native";
+import { router } from "expo-router";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import {
   Card,
   EmptyState,
@@ -47,7 +48,7 @@ interface MerchantDashboard {
 
 function Metric({ label, value, accent = false }: { label: string; value: string | number; accent?: boolean }) {
   return (
-    <Card style={[styles.metric, accent && styles.metricAccent]}>
+    <Card style={accent ? [styles.metric, styles.metricAccent] : styles.metric}>
       <Text style={[styles.metricLabel, accent && styles.metricAccentText]}>{label}</Text>
       <Text style={[styles.metricValue, accent && styles.metricAccentText]}>{value}</Text>
     </Card>
@@ -78,6 +79,15 @@ function Recent({ items, customer }: { items: RecentPayment[]; customer: boolean
   );
 }
 
+function ActionCard({ title, detail, onPress }: { title: string; detail: string; onPress(): void }) {
+  return (
+    <Pressable accessibilityRole="button" onPress={onPress} style={({ pressed }) => [styles.action, pressed && styles.actionPressed]}>
+      <Text style={styles.actionTitle}>{title}</Text>
+      <Text style={uiStyles.muted}>{detail}</Text>
+    </Pressable>
+  );
+}
+
 function CustomerHome() {
   const { user } = useAuth();
   const { data, error, loading } = useApiData(() =>
@@ -93,6 +103,11 @@ function CustomerHome() {
         <Metric label="Today" value={npr(data.todaySpending)} />
         <Metric label="This month" value={npr(data.monthlySpending)} />
         <Metric label="Setup" value={`${data.setup.progress}%`} />
+      </View>
+      <View style={styles.actions}>
+        <ActionCard title="Palm Pay" detail="Manage your palm enrollment." onPress={() => router.push("./palm")} />
+        <ActionCard title="QR Pay" detail="Scan a merchant payment QR." onPress={() => router.push("./qr-pay")} />
+        <ActionCard title="Send Money" detail="Open your wallet and transfer status." onPress={() => router.push("./wallet")} />
       </View>
       <Card>
         <View style={uiStyles.rowBetween}>
@@ -119,6 +134,10 @@ function MerchantHome() {
     <Screen>
       <PageHeader eyebrow="Merchant console" title={data.merchant.businessName} detail="Live activity for your demo merchant wallet." />
       <StatusPill value={data.merchant.approvalStatus} />
+      <View style={styles.actions}>
+        <ActionCard title="Palm Pay" detail="Accept a controlled Palm Pay transaction." onPress={() => router.push("./palm-pay")} />
+        <ActionCard title="Generate QR" detail="Create a static or expiring payment QR." onPress={() => router.push("./generate-qr")} />
+      </View>
       <View style={styles.metricsGrid}>
         <Metric label="Today's revenue" value={npr(data.metrics.revenue)} accent />
         <Metric label="Payments" value={data.metrics.transactions} />
@@ -154,4 +173,8 @@ const styles = StyleSheet.create({
   listTitle: { color: colors.ink, fontWeight: "800", marginBottom: 3 },
   amountSide: { alignItems: "flex-end", gap: 5 },
   amount: { color: colors.forest700, fontWeight: "900" },
+  actions: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md },
+  action: { width: "47%", minHeight: 104, justifyContent: "center", gap: spacing.sm, padding: spacing.lg, borderRadius: 18, borderWidth: 1, borderColor: colors.slate200, backgroundColor: colors.surface },
+  actionPressed: { opacity: 0.78 },
+  actionTitle: { color: colors.forest700, fontSize: 17, fontWeight: "900" },
 });

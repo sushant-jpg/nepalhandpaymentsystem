@@ -88,12 +88,13 @@ async function start() {
       );
   }, config.PAYMENT_CLEANUP_INTERVAL_SECONDS * 1000);
   maintenanceTimer.unref();
-  server.listen(config.PORT, () => {
+  server.listen(config.PORT, "0.0.0.0", () => {
     console.log(
       JSON.stringify({
         level: "info",
         message: "Nepal Hand Pay API started",
         port: config.PORT,
+        host: "0.0.0.0",
         environment: config.NODE_ENV,
       }),
     );

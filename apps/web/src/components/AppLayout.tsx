@@ -13,6 +13,7 @@ import {
   LogOut,
   Menu,
   ReceiptText,
+  QrCode,
   RefreshCcw,
   ScanLine,
   Settings,
@@ -37,6 +38,7 @@ const nav: Record<Role, { to: string; labelKey: string; icon: typeof Hand }[]> =
     CUSTOMER: [
       { to: "/app", labelKey: "nav.dashboard", icon: LayoutDashboard },
       { to: "/app/wallet", labelKey: "nav.wallet", icon: Wallet },
+      { to: "/app/qr-pay", labelKey: "nav.qrPay", icon: QrCode },
       { to: "/app/transactions", labelKey: "nav.payHistory", icon: History },
       { to: "/app/palm", labelKey: "nav.myPalm", icon: Hand },
       {
@@ -50,6 +52,7 @@ const nav: Record<Role, { to: string; labelKey: string; icon: typeof Hand }[]> =
     MERCHANT: [
       { to: "/app", labelKey: "nav.dashboard", icon: LayoutDashboard },
       { to: "/app/pos", labelKey: "nav.newPayment", icon: ScanLine },
+      { to: "/app/generate-qr", labelKey: "nav.generateQr", icon: QrCode },
       {
         to: "/app/transactions",
         labelKey: "nav.transactions",

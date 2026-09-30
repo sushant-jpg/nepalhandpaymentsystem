@@ -6,6 +6,8 @@ import {
   CreditCard,
   Hand,
   ReceiptText,
+  QrCode,
+  Send,
   ShieldAlert,
   Store,
   TrendingUp,
@@ -101,6 +103,23 @@ function CustomerDashboard() {
           </Link>
         }
       />
+      <section className="mb-6 grid gap-4 md:grid-cols-3" aria-label={t("payment.actions")}>
+        <Link className="card group transition hover:border-forest-400" to="/app/palm">
+          <Hand className="text-forest-600" />
+          <h2 className="mt-3 text-lg font-bold">{t("payment.palmPay")}</h2>
+          <p className="mt-1 text-sm text-slate-500">{t("payment.palmHelp")}</p>
+        </Link>
+        <Link className="card group transition hover:border-forest-400" to="/app/qr-pay">
+          <QrCode className="text-blue-600" />
+          <h2 className="mt-3 text-lg font-bold">{t("payment.qrPay")}</h2>
+          <p className="mt-1 text-sm text-slate-500">{t("payment.qrHelp")}</p>
+        </Link>
+        <Link className="card group transition hover:border-forest-400" to="/app/wallet">
+          <Send className="text-amber-600" />
+          <h2 className="mt-3 text-lg font-bold">{t("payment.sendMoney")}</h2>
+          <p className="mt-1 text-sm text-slate-500">{t("payment.sendHelp")}</p>
+        </Link>
+      </section>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
           accent
@@ -209,10 +228,16 @@ function MerchantDashboard() {
         title={data.merchant.businessName}
         description="Live sales, refunds, and checkout activity for your demo merchant wallet."
         action={
-          <Link className="btn-primary" to="/app/pos">
-            <Hand size={17} />
-            {t("New palm payment")}
-          </Link>
+          <div className="flex flex-wrap gap-3">
+            <Link className="btn-secondary" to="/app/pos">
+              <Hand size={17} />
+              {t("payment.palmPay")}
+            </Link>
+            <Link className="btn-primary" to="/app/generate-qr">
+              <QrCode size={17} />
+              {t("qr.generateQr")}
+            </Link>
+          </div>
         }
       />
       <div className="mb-5">

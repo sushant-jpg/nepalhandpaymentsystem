@@ -59,6 +59,14 @@ const OnboardingPage = lazy(() =>
 const PosPage = lazy(() =>
   import("./pages/PosPage").then((module) => ({ default: module.PosPage })),
 );
+const QrPayPage = lazy(() =>
+  import("./pages/QrPayPage").then((module) => ({ default: module.QrPayPage })),
+);
+const MerchantQrPage = lazy(() =>
+  import("./pages/MerchantQrPage").then((module) => ({
+    default: module.MerchantQrPage,
+  })),
+);
 const ProfilePage = lazy(() =>
   import("./pages/ProfilePage").then((module) => ({
     default: module.ProfilePage,
@@ -145,10 +153,26 @@ export default function App() {
             }
           />
           <Route
+            path="qr-pay"
+            element={
+              <RoleRoute roles={["CUSTOMER"]}>
+                <QrPayPage />
+              </RoleRoute>
+            }
+          />
+          <Route
             path="pos"
             element={
               <RoleRoute roles={["MERCHANT"]}>
                 <PosPage />
+              </RoleRoute>
+            }
+          />
+          <Route
+            path="generate-qr"
+            element={
+              <RoleRoute roles={["MERCHANT"]}>
+                <MerchantQrPage />
               </RoleRoute>
             }
           />

@@ -282,7 +282,9 @@ export function CameraCapture({
     }
   }
 
-  const processing = guardRef.current.isProcessing || busy;
+  const processing =
+    busy || scanState === "CAPTURING" || scanState === "IDENTIFYING";
+  const armed = scanState !== "SUCCESS" && scanState !== "FAILED";
   return (
     <div>
       <div className="relative aspect-[4/3] overflow-hidden rounded-2xl bg-slate-950">
@@ -329,7 +331,7 @@ export function CameraCapture({
           type="button"
           className="btn-secondary flex-1"
           onClick={() => void captureManually()}
-          disabled={!ready || processing || !guardRef.current.isArmed}
+          disabled={!ready || processing || !armed}
         >
           <Camera size={18} />
           {processing ? "Processing…" : assessFrames ? "Capture now" : captureLabel}
