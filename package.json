@@ -7,6 +7,10 @@
     "apps/*",
     "packages/*"
   ],
+  "overrides": {
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
+  },
   "scripts": {
     "predev": "node scripts/mongo-dev.mjs start",
     "dev": "concurrently -n web,api,palm -c cyan,green,magenta \"npm run dev -w @nepal-hand-pay/web\" \"npm run dev -w @nepal-hand-pay/api\" \"npm run dev:palm\"",

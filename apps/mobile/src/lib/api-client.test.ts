@@ -34,6 +34,23 @@ function storage(): StringStorage {
 }
 
 describe("mobile API client", () => {
+  it("checks API health without authentication and without duplicating /api/v1", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({ success: true, data: { api: "ok" } }),
+    );
+    const client = new ApiClient({
+      baseUrl: () => "http://192.168.1.20:4000/api/v1",
+      sessionStore: createSessionStore(storage()),
+      native: true,
+      fetcher,
+    });
+
+    await expect(client.health()).resolves.toEqual({ api: "ok" });
+    const [url, init] = fetcher.mock.calls[0] ?? [];
+    expect(url).toBe("http://192.168.1.20:4000/api/v1/health/live");
+    expect(new Headers(init?.headers).has("Authorization")).toBe(false);
+  });
+
   it("logs in through the existing API and persists rotated credentials", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
       jsonResponse({
@@ -64,6 +81,58 @@ describe("mobile API client", () => {
     await expect(sessionStore.read()).resolves.toEqual({
       accessToken: "access-1",
       refreshToken: "refresh-1",
+    });
+  });
+
+  it("preserves an invalid-credentials response instead of reporting a network error", async () => {
+    const client = new ApiClient({
+      baseUrl: () => "https://api.example/api/v1",
+      sessionStore: createSessionStore(storage()),
+      native: true,
+      fetcher: vi.fn<typeof fetch>().mockResolvedValue(
+        jsonResponse(
+          {
+            success: false,
+            error: {
+              code: "AUTH_INVALID_CREDENTIALS",
+              message: "Invalid email or password.",
+            },
+          },
+          401,
+        ),
+      ),
+    });
+
+    await expect(client.login(user.email, "wrong-password")).rejects.toMatchObject({
+      message: "Invalid email or password.",
+      code: "AUTH_INVALID_CREDENTIALS",
+      status: 401,
+    });
+  });
+
+  it("maps Redis/service unavailability to a clear user-facing login message", async () => {
+    const client = new ApiClient({
+      baseUrl: () => "https://api.example/api/v1",
+      sessionStore: createSessionStore(storage()),
+      native: true,
+      fetcher: vi.fn<typeof fetch>().mockResolvedValue(
+        jsonResponse(
+          {
+            success: false,
+            error: {
+              code: "REDIS_UNAVAILABLE",
+              message: "A required backend dependency is temporarily unavailable.",
+            },
+          },
+          503,
+        ),
+      ),
+    });
+
+    await expect(client.login(user.email, "Password123")).rejects.toMatchObject({
+      message: "Authentication service is temporarily unavailable. Please try again shortly.",
+      code: "REDIS_UNAVAILABLE",
+      status: 503,
     });
   });
 

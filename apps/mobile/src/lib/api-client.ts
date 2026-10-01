@@ -17,10 +17,51 @@ export interface AuthSessionPayload {
   developmentVerificationToken?: string;
 }
 
+export interface ApiHealthPayload {
+  api: string;
+}
+
 interface ErrorPayload {
   code?: string;
   message?: string;
   details?: unknown;
+}
+
+function userMessageForError(code: string | undefined, fallback: string, status: number): string {
+  if (code === "AUTH_INVALID_CREDENTIALS" || code === "INVALID_CREDENTIALS") {
+    return "Invalid email or password.";
+  }
+  if (code === "AUTH_ACCOUNT_LOCKED" || code === "ACCOUNT_LOCKED") {
+    return "Your account is temporarily locked. Try again later or reset your password.";
+  }
+  if (code === "AUTH_EMAIL_NOT_VERIFIED") {
+    return "Verify your email before signing in.";
+  }
+  if (code === "REDIS_UNAVAILABLE" || code === "AUTH_TEMPORARILY_UNAVAILABLE") {
+    return "Authentication service is temporarily unavailable. Please try again shortly.";
+  }
+  if (code === "NETWORK_UNAVAILABLE") {
+    return "Cannot connect to Nepal Hand Pay server.";
+  }
+  if (code === "API_UNAVAILABLE") {
+    return "Cannot connect to Nepal Hand Pay server.";
+  }
+  if (code === "REQUEST_TIMEOUT") {
+    return "The request timed out. Check the transaction status before retrying.";
+  }
+  if (code === "VALIDATION_ERROR") {
+    return "Please review the email and password and try again.";
+  }
+  if (status === 401) {
+    return "Email or password is incorrect.";
+  }
+  if (status === 503) {
+    return "Authentication service is temporarily unavailable. Please try again shortly.";
+  }
+  if (status >= 500) {
+    return "The server could not complete the request. Please try again.";
+  }
+  return fallback;
 }
 
 export class MobileApiError extends Error {
@@ -46,6 +87,15 @@ interface ApiClientOptions {
 function defaultRequestId(): string {
   const random = Math.random().toString(36).slice(2, 12);
   return `nhpm-${Date.now().toString(36)}-${random}`;
+}
+
+function logDevelopmentNetworkFailure(
+  baseUrl: string,
+  category: "REQUEST_TIMEOUT" | "NETWORK_UNAVAILABLE" | "API_UNAVAILABLE",
+): void {
+  if (typeof __DEV__ !== "undefined" && __DEV__) {
+    console.warn(`[Nepal Hand Pay] ${category}; API base URL: ${baseUrl}`);
+  }
 }
 
 export class ApiClient {
@@ -167,12 +217,19 @@ export class ApiClient {
         signal: controller.signal,
       });
     } catch (error) {
-      if (error instanceof Error && error.name === "AbortError")
+      const baseUrl = this.options.baseUrl();
+      if (error instanceof Error && error.name === "AbortError") {
+        logDevelopmentNetworkFailure(baseUrl, "REQUEST_TIMEOUT");
         throw new MobileApiError(
           "The request timed out. Check the transaction status before retrying.",
           "REQUEST_TIMEOUT",
         );
+      }
       const offline = typeof navigator !== "undefined" && navigator.onLine === false;
+      logDevelopmentNetworkFailure(
+        baseUrl,
+        offline ? "NETWORK_UNAVAILABLE" : "API_UNAVAILABLE",
+      );
       throw new MobileApiError(
         offline
           ? "Network unavailable. Connect this device to the internet or your development Wi-Fi."
@@ -208,14 +265,24 @@ export class ApiClient {
       | { success: false; error: ErrorPayload };
     if (!response.ok || !payload.success) {
       const error = payload.success ? undefined : payload.error;
+      const code = error?.code;
+      const fallbackMessage = error?.message ?? "The request could not be completed.";
       throw new MobileApiError(
-        error?.message ?? "The request could not be completed.",
-        error?.code,
+        userMessageForError(code, fallbackMessage, response.status),
+        code,
         response.status,
         error?.details,
       );
     }
     return payload.data;
+  }
+
+  async health(): Promise<ApiHealthPayload> {
+    return this.request<ApiHealthPayload>("/health/live", {
+      authenticated: false,
+      retryAuth: false,
+      timeoutMs: 5_000,
+    });
   }
 
   async login(email: string, password: string): Promise<AuthSessionPayload> {
