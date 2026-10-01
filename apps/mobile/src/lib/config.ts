@@ -14,6 +14,10 @@ export function resolveApiUrl(
     throw new MobileConfigurationError(
       "EXPO_PUBLIC_API_URL is not configured. Copy apps/mobile/.env.example to apps/mobile/.env and use your API's reachable URL.",
     );
+  if (!/^[a-z][a-z\d+.-]*:\/\//i.test(candidate))
+    throw new MobileConfigurationError(
+      "EXPO_PUBLIC_API_URL must be a complete http:// or https:// URL.",
+    );
   let parsed: URL;
   try {
     parsed = new URL(candidate);

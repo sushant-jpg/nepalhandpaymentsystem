@@ -19,6 +19,9 @@ describe("mobile API URL", () => {
     expect(() => resolveApiUrl("localhost:4000/api/v1")).toThrow(
       /complete http/,
     );
+    expect(() => resolveApiUrl("ftp://example.test/api/v1")).toThrow(
+      /must use http/,
+    );
     expect(() => resolveApiUrl("https://user:pass@example/api/v1")).toThrow(
       /must not contain credentials/,
     );
